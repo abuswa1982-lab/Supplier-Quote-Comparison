@@ -1,0 +1,2511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Supplier Quote Comparison — Modonix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --paper:#F5F7F9;
+    --card:#FFFFFF;
+    --ink:#1A2530;
+    --navy:#0C447C;
+    --blue:#378ADD;
+    --blue-tint:#E7F0F8;
+    --rust:#B4451F;
+    --rust-tint:#FBECE4;
+    --amber:#8A5A00;
+    --amber-tint:#FFF6E5;
+    --green:#2E7D57;
+    --green-tint:#F1F8F4;
+    --muted:#64748B;
+    --line:#D9E0E7;
+    --line-strong:#C2CCD6;
+    --display:'Space Grotesk',system-ui,sans-serif;
+    --body:'Inter',system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--body);
+    font-size:15px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px 80px}
+  header.top{border-bottom:2px solid var(--navy);background:var(--card);margin-bottom:26px}
+  .top-inner{max-width:1120px;margin:0 auto;padding:22px 20px 20px}
+  .brandline{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .brandmark{
+    font-family:var(--mono);font-weight:600;font-size:12px;letter-spacing:.22em;
+    color:var(--navy);border:1.5px solid var(--navy);padding:3px 8px;border-radius:2px;
+  }
+  .brand-tag{font-size:12px;color:var(--muted);letter-spacing:.02em}
+  h1{font-family:var(--display);font-weight:700;font-size:30px;line-height:1.1;margin:0 0 6px;color:var(--navy);letter-spacing:-.01em}
+  .sub{font-size:14.5px;color:var(--muted);max-width:720px;margin:0}
+  .sub b{color:var(--ink);font-weight:600}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:20px;margin-bottom:18px}
+  .card h2{
+    font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--muted);margin:0 0 14px;
+  }
+  label.fld{display:block;font-size:12.5px;font-weight:600;color:var(--ink);margin:0 0 6px;letter-spacing:.01em}
+  input[type=text],input[type=password],textarea,select{
+    width:100%;font-family:var(--body);font-size:14px;color:var(--ink);
+    background:var(--paper);border:1px solid var(--line-strong);border-radius:4px;padding:10px 11px;
+  }
+  input:focus,textarea:focus,select:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:var(--blue)}
+  textarea{min-height:130px;resize:vertical;font-family:var(--mono);font-size:12.5px;line-height:1.55}
+  .hint{font-size:12px;color:var(--muted);margin:6px 0 0;line-height:1.45}
+  .keyrow{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .keyrow>div:first-child{flex:1;min-width:240px}
+  .modelchip{
+    font-family:var(--mono);font-size:11.5px;color:var(--navy);background:var(--blue-tint);
+    border:1px solid #CBDDEE;border-radius:3px;padding:8px 10px;white-space:nowrap;
+  }
+  .drop{
+    border:1.5px dashed var(--line-strong);border-radius:5px;background:var(--paper);
+    padding:20px 16px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
+  }
+  .drop:hover,.drop.over{border-color:var(--blue);background:var(--blue-tint)}
+  .drop .big{font-family:var(--display);font-weight:600;font-size:14.5px;color:var(--navy);margin-bottom:3px}
+  .drop .small{font-size:12.5px;color:var(--muted)}
+  .filelist{margin-top:10px;display:flex;flex-direction:column;gap:7px}
+  .filepill{
+    display:flex;align-items:center;gap:9px;background:var(--card);border:1px solid var(--line);
+    border-radius:4px;padding:8px 11px;font-size:13px;
+  }
+  .filepill .nm{font-family:var(--mono);font-size:12px;color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .filepill .sz{font-size:11.5px;color:var(--muted)}
+  .filepill .x{cursor:pointer;color:var(--muted);font-weight:600;padding:0 4px;line-height:1}
+  .filepill .x:hover{color:var(--rust)}
+  .toggle{display:flex;gap:0;margin-bottom:12px;border:1px solid var(--line-strong);border-radius:4px;overflow:hidden;width:fit-content}
+  .toggle button{
+    font-family:var(--body);font-size:12.5px;font-weight:600;padding:6px 13px;border:0;background:var(--card);
+    color:var(--muted);cursor:pointer;
+  }
+  .toggle button.on{background:var(--navy);color:#fff}
+  .pagetabs{display:flex;gap:8px;margin:0 0 20px;border-bottom:2px solid var(--line);flex-wrap:wrap}
+  .pagetabs button{
+    font-family:var(--display);font-weight:600;font-size:14px;padding:11px 6px;border:0;background:transparent;
+    color:var(--muted);cursor:pointer;margin-bottom:-2px;border-bottom:2px solid transparent;
+  }
+  .pagetabs button.on{color:var(--navy);border-bottom-color:var(--navy)}
+  .pagetabs button:hover{color:var(--navy)}
+  .pagetabs .tabcount{
+    font-family:var(--mono);font-size:10px;font-weight:600;background:var(--blue-tint);color:var(--navy);
+    border:1px solid #CBDDEE;border-radius:8px;padding:1px 6px;margin-left:5px;vertical-align:1px;
+  }
+  .collapsible-head{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+  .collapsible-head h2{margin:0}
+  .collapsible-head .chev{transition:transform .15s;color:var(--muted);font-size:16px;flex:none;font-style:normal}
+  .collapsible-head.open .chev{transform:rotate(180deg)}
+  .collapsible-summary{font-size:12.5px;color:var(--muted);margin-left:auto;font-weight:500}
+  .collapsible-body{margin-top:14px}
+  .setup-wrap{background:var(--blue-tint);border:1px solid #CBDDEE;border-radius:6px;padding:16px 20px;margin-bottom:18px}
+  .setup-wrap .card{background:var(--card)}
+  .setup-wrap .collapsible-head h2{color:var(--blue);text-transform:none;font-size:15px;letter-spacing:0}
+  .stopbtn{display:none;font-family:var(--body);font-size:13px;font-weight:600;padding:9px 16px;border-radius:5px;border:1px solid #C0392B;color:#C0392B;background:var(--card);cursor:pointer}
+  .stopbtn:hover{background:#FBECE4}
+  .stopbtn.show{display:inline-block}
+  .run{
+    font-family:var(--display);font-weight:600;font-size:15px;letter-spacing:.01em;
+    background:var(--navy);color:#fff;border:0;border-radius:5px;padding:13px 24px;cursor:pointer;transition:background .15s;
+  }
+  .run:hover{background:#0F2437}
+  .run:disabled{background:var(--line-strong);cursor:not-allowed}
+  .runbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .spin{width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;display:none}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .note{border-radius:5px;padding:12px 14px;font-size:13.5px;margin-bottom:18px;line-height:1.5}
+  .note.err{background:var(--rust-tint);border:1px solid #EBC3B0;color:#7A2E12}
+  .note.err b{color:#5C2109}
+  .note.ok{background:var(--green-tint);border:1px solid #BFDCC9;color:#215A3B}
+  .note.info{background:var(--blue-tint);border:1px solid #CBDDEE;color:#16304B}
+  .note.warn{background:var(--amber-tint);border:1px solid #EAD8A8;color:#6B4600}
+  .btn2{
+    font-family:var(--body);font-size:13px;font-weight:600;background:var(--card);color:var(--navy);
+    border:1px solid var(--line-strong);border-radius:4px;padding:9px 16px;cursor:pointer;
+  }
+  .btn2:hover{background:var(--blue-tint);border-color:var(--blue)}
+  .btn2.primary{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .btn2.primary:hover{background:#0F2437}
+  .btn2:disabled{opacity:.5;cursor:not-allowed}
+  .btnsm{
+    font-family:var(--body);font-size:11.5px;font-weight:600;background:var(--card);color:var(--navy);
+    border:1px solid var(--line-strong);border-radius:3px;padding:4px 9px;cursor:pointer;
+  }
+  .btnsm:hover{background:var(--blue-tint);border-color:var(--blue)}
+  footer{max-width:1120px;margin:40px auto 0;padding:20px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px;line-height:1.6}
+  footer b{color:var(--ink)}
+  @media (prefers-reduced-motion:reduce){.spin{animation:none}}
+
+  /* ---- supplier slots ---- */
+  .supgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+  .supcard{border:1px solid var(--line);border-radius:6px;padding:16px;background:var(--paper)}
+  .supcard.filled{border-color:#BFDCC9;background:var(--green-tint)}
+  .supcard .suphead{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .supcard .supno{
+    font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.1em;color:#fff;background:var(--navy);
+    border-radius:3px;padding:3px 7px;flex:none;
+  }
+  .supcard.filled .supno{background:var(--green)}
+  .supcard .supstate{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--muted);font-family:var(--mono)}
+  .supcard.filled .supstate{color:var(--green)}
+
+  /* ---- summary band ---- */
+  .summary{
+    background:var(--navy);color:#fff;border-radius:6px;padding:18px 20px;margin-bottom:20px;
+    display:flex;flex-wrap:wrap;gap:22px 34px;align-items:flex-end;
+  }
+  .summary .proj{flex:1;min-width:200px}
+  .summary .proj .pl{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#93AEC7;margin-bottom:3px;font-family:var(--mono)}
+  .summary .proj .pv{font-family:var(--display);font-weight:600;font-size:19px;line-height:1.2}
+  .stat{text-align:left}
+  .stat .n{font-family:var(--display);font-weight:700;font-size:26px;line-height:1}
+  .stat .l{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#93AEC7;margin-top:4px;font-family:var(--mono)}
+  .stat.warn .n{color:#FFB38A}
+  .stat.good .n{color:#9BE0BC}
+
+  /* ---- supplier scorecards ---- */
+  .scorecards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:22px}
+  .sccard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:15px 16px;border-top:4px solid var(--navy)}
+  .sccard .scname{font-family:var(--display);font-weight:600;font-size:15px;color:var(--navy);margin-bottom:2px;word-break:break-word}
+  .sccard .sctot{font-family:var(--display);font-weight:700;font-size:23px;margin:6px 0 2px}
+  .sccard .sctotl{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .sccard .scrow{display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-top:1px solid #EDF1F4;margin-top:8px}
+  .sccard .scrow span:first-child{color:var(--muted)}
+  .sccard .scrow span:last-child{font-weight:600;font-family:var(--mono);font-size:12px}
+  .sccard .scflag{font-size:11.5px;color:var(--rust);font-weight:600;margin-top:8px;line-height:1.4}
+
+  /* ---- matrix table ---- */
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--card);margin-bottom:8px}
+  table.matrix{border-collapse:collapse;width:100%;font-size:13px;min-width:760px}
+  table.matrix th{
+    background:var(--navy);color:#fff;font-family:var(--display);font-weight:600;font-size:12px;
+    text-align:left;padding:10px 11px;position:sticky;top:0;letter-spacing:.02em;
+  }
+  table.matrix th.supcol{border-left:1px solid #2A5C8E}
+  table.matrix td{padding:9px 11px;border-top:1px solid #EDF1F4;vertical-align:top}
+  table.matrix td.supcell{border-left:1px solid #EDF1F4;font-size:12.5px}
+  table.matrix tr:hover td{background:#FAFCFD}
+  table.matrix tr.hasissue td:first-child{box-shadow:inset 3px 0 0 var(--rust)}
+  .itemdesc{font-weight:600;color:var(--ink);line-height:1.35}
+  .itemsub{font-size:11.5px;color:var(--muted);margin-top:2px;font-family:var(--mono)}
+  .qtybox{font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap}
+  .pricebox{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+  .mm{display:inline-block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:3px;margin-bottom:3px}
+  .mm.exact{background:var(--green-tint);color:#215A3B;border:1px solid #BFDCC9}
+  .mm.equiv{background:var(--blue-tint);color:#16304B;border:1px solid #CBDDEE}
+  .mm.sub{background:var(--amber-tint);color:var(--amber);border:1px solid #EAD8A8}
+  .mm.miss{background:var(--rust-tint);color:var(--rust);border:1px solid #EBC3B0}
+  .mm.unclear{background:#EEF2F6;color:var(--muted);border:1px solid var(--line-strong)}
+  .conf{font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:4px}
+  .why{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.35;font-style:italic}
+  .catchip{
+    font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--navy);background:#EEF2F6;
+    border:1px solid var(--line-strong);border-radius:3px;padding:2px 7px;letter-spacing:.02em;
+  }
+  .grp{margin-bottom:26px}
+  .grp-h{display:flex;align-items:center;gap:10px;margin:0 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line)}
+  .grp-h .t{font-family:var(--display);font-weight:600;font-size:15px;color:var(--navy)}
+  .grp-h .c{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-left:auto}
+
+  /* ---- exceptions ---- */
+  .exc{
+    display:flex;gap:12px;padding:13px 14px;border:1px solid var(--line);border-left-width:4px;
+    border-radius:5px;background:var(--card);margin-bottom:10px;align-items:flex-start;
+  }
+  .exc.high{border-left-color:var(--rust)}
+  .exc.medium{border-left-color:#D89B2C}
+  .exc.low{border-left-color:var(--line-strong)}
+  .exc.done{opacity:.55;background:var(--green-tint)}
+  .exc input[type=checkbox]{width:17px;height:17px;margin-top:2px;accent-color:var(--green);flex-shrink:0;cursor:pointer}
+  .exc .body{flex:1;min-width:0}
+  .exc .headline{font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.35}
+  .exc.done .headline{text-decoration:line-through;color:var(--muted)}
+  .exc .detail{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.45}
+  .exc .ask{font-size:13px;color:var(--navy);margin-top:6px;line-height:1.4;font-weight:500}
+  .exc .act{font-size:13px;color:var(--green);margin-top:6px;line-height:1.4;font-weight:500}
+  .exc .act::before{content:"Do this: ";font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .exc .ask::before{content:"Ask them: ";font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .exc .metaline{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px;align-items:center}
+  .sev{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:3px}
+  .sev.high{background:var(--rust-tint);color:var(--rust);border:1px solid #EBC3B0}
+  .sev.medium{background:var(--amber-tint);color:var(--amber);border:1px solid #EAD8A8}
+  .sev.low{background:#EEF2F6;color:var(--muted);border:1px solid var(--line-strong)}
+  .kind{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--navy);background:var(--blue-tint);border:1px solid #CBDDEE;border-radius:3px;padding:2px 7px}
+  .whochip{font-family:var(--mono);font-size:10.5px;color:var(--ink);background:#EEF2F6;border:1px solid var(--line-strong);border-radius:3px;padding:2px 7px}
+  .filterbar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+  .filterbar .fb{
+    font-family:var(--body);font-size:12px;font-weight:600;background:var(--card);color:var(--muted);
+    border:1px solid var(--line-strong);border-radius:20px;padding:5px 13px;cursor:pointer;
+  }
+  .filterbar .fb.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .resbar{display:flex;gap:10px;margin:24px 0 0;flex-wrap:wrap}
+  #cmpResults,#excResults,#quoteResults{display:none}
+  .progline{font-size:12.5px;color:var(--muted);font-family:var(--mono);margin-top:10px;line-height:1.5}
+  .qsum{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px}
+  .qsumchip{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:7px 11px;font-size:12px}
+  .qsumchip b{font-family:var(--display);font-size:14px;color:var(--navy);display:block}
+  .askrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .askq{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin-bottom:12px}
+  .askq .qq{font-weight:600;font-size:14px;color:var(--navy);margin-bottom:6px}
+  .askq .aa{font-size:13.5px;line-height:1.55;white-space:pre-wrap}
+  .askq .src{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px}
+</style>
+</head>
+<body>
+<div id="cloudFailBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#B4451F;color:#fff;padding:12px 20px;font-size:13.5px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.2)">
+  <span id="cloudFailText"></span>
+  <button id="cloudFailRetryBtn" onclick="retryLastSave(this)" style="margin-left:14px;background:#fff;color:#B4451F;border:1px solid #fff;border-radius:4px;padding:3px 12px;font-size:12px;font-weight:700;cursor:pointer">Retry Save</button>
+  <button onclick="downloadBackup(lastFailedSave&&lastFailedSave.phase,lastFailedSave&&lastFailedSave.data)" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.4);color:#fff;border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer">Download Backup</button>
+  <button onclick="document.getElementById('cloudFailBanner').style.display='none'" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.4);color:#fff;border-radius:4px;padding:3px 10px;font-size:12px;cursor:pointer">Dismiss</button>
+</div>
+
+<header class="top">
+  <div class="top-inner" style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px">
+    <div>
+      <div class="brandline">
+        <span class="brandmark">MODONIX</span>
+        <span class="brand-tag">Estimating tools &middot; Phase 2</span>
+      </div>
+      <h1>Supplier Quote Comparison</h1>
+      <p class="sub"><b>The takeoff is the reference.</b> This reads every supplier quote line by line against it, checks the takeoff itself against what the bid documents require, and hands back only the items a human has to decide on. Nothing gets matched silently: every match shows what it matched to, how sure it is, and why.</p>
+    </div>
+    <button class="btn2" style="white-space:nowrap;margin-top:2px" onclick="clearProject(this)" title="Clears all uploaded quotes and results. Your API key and Worker URL stay put.">Clear Project</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="setup-wrap">
+    <div class="collapsible-head" onclick="toggleCollapse(this)">
+      <i class="chev">&#9662;</i>
+      <h2>Setup</h2>
+      <span class="collapsible-summary">API key &middot; cloud project &middot; load &amp; recover</span>
+    </div>
+    <div class="collapsible-body" style="display:none">
+      <div class="card">
+        <h2>Connection</h2>
+        <div class="keyrow">
+          <div>
+            <label class="fld" for="key">Anthropic API key</label>
+            <input type="password" id="key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+          </div>
+          <div class="modelchip" id="modelchip">model: loading&hellip;</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:10px;font-size:12.5px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" id="rememberKey" style="width:15px;height:15px;margin:0;cursor:pointer">
+          Remember this key on this device (skips re-pasting it every visit)
+        </label>
+        <p class="hint">Off by default: the key stays in this tab only and clears when you close it. Checking the box saves it in this browser's local storage instead, so it survives reloads, on this device only, never sent anywhere but Anthropic. It is the same key the Bid Requirements Reader uses, and checking the box in either tool fills it in for both.</p>
+      </div>
+      <div class="card">
+        <h2>Cloud Project</h2>
+        <p class="hint" style="margin:0 0 10px">Use the <b>same project name</b> you used in the Bid Requirements Reader. Both tools write to the same Worker, so this tool can pull that project's spec findings straight out of the cloud instead of you re-uploading the spec, and everything this tool produces saves back under the same project.</p>
+        <div>
+          <label class="fld" for="cloudWorkerUrl">Worker URL</label>
+          <input type="text" id="cloudWorkerUrl" value="https://camtech-bid-reader-api.abuswa1982.workers.dev" placeholder="https://camtech-bid-reader-api.yourname.workers.dev">
+          <p class="hint">Already filled in. Only touch it if you ever point this app at a different Worker.</p>
+        </div>
+        <div style="margin-top:12px">
+          <label class="fld" for="cloudProject">Project name</label>
+          <input type="text" id="cloudProject" list="projectSuggestions" placeholder="e.g. Erie County Health Lab">
+          <datalist id="projectSuggestions"></datalist>
+          <p class="hint" id="projectSuggestHint" style="margin-top:4px"></p>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+          <button class="btn2 primary" onclick="loadCloudProject(this)" type="button">Load Project</button>
+          <span class="hint" id="cloudStatus" style="margin:0"></span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Recover a Failed Save</h2>
+        <p class="hint" style="margin:0 0 10px">If the red banner shows up and "Retry Save" doesn't get through, download the backup file it offers. Bring that file here, on any computer, any network, even weeks later, and push it into the cloud. Nothing gets re-read and nothing costs anything: this only moves data that has already been extracted.</p>
+        <input type="file" id="backupFile" accept="application/json">
+        <div style="margin-top:10px">
+          <button class="btn2 primary" onclick="importBackup()" type="button">Push to Cloud</button>
+        </div>
+        <div id="backupMsg"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pagetabs">
+    <button id="ptab-takeoff" class="on" onclick="setPageTab('takeoff')" type="button">1 &middot; Takeoff<span class="tabcount" id="tc-to">0</span></button>
+    <button id="ptab-quotes" onclick="setPageTab('quotes')" type="button">2 &middot; Supplier Quotes<span class="tabcount" id="tc-quotes">0</span></button>
+    <button id="ptab-bidreq" onclick="setPageTab('bidreq')" type="button">3 &middot; What the Bid Requires<span class="tabcount" id="tc-req">0</span></button>
+    <button id="ptab-compare" onclick="setPageTab('compare')" type="button">4 &middot; Comparison</button>
+    <button id="ptab-exceptions" onclick="setPageTab('exceptions')" type="button">5 &middot; Exceptions<span class="tabcount" id="tc-exc">0</span></button>
+    <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
+  </div>
+
+  <!-- ============================ TAB 1: TAKEOFF ============================ -->
+  <div id="page-takeoff">
+    <div class="note info">
+      <b>The takeoff is the reference. Everything else is measured against it.</b> This is the sheet that says what the job actually needs and it is what goes out to the suppliers. Without it there is nothing to compare anything to, so this tab comes first. Drop the Excel sheet in. PDF, Word, a photo of a marked-up sheet and plain pasted text all work too, but Excel is what this is built around.
+    </div>
+    <div class="card">
+      <h2>The material takeoff</h2>
+      <div class="toggle">
+        <button id="ttab-file" class="on" onclick="setToMode('file')" type="button">Upload a file</button>
+        <button id="ttab-text" onclick="setToMode('text')" type="button">Paste text</button>
+      </div>
+      <div id="tomode-file">
+        <div class="drop" id="toDrop">
+          <div class="big">Drop the takeoff sheet here</div>
+          <div class="small">or click to choose &middot; Excel (.xlsx, .xls, .csv), PDF, Word, or a photo of a marked-up sheet</div>
+        </div>
+        <input type="file" id="toFile" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.webp" multiple style="display:none">
+        <div class="filelist" id="toFilelist"></div>
+      </div>
+      <div id="tomode-text" style="display:none">
+        <textarea id="toText" placeholder="500 LF&#9;2&quot; Type L copper&#10;12 EA&#9;Water closet, American Standard 2234.001&#10;20 EA&#9;2&quot; ball valve, bronze&#10;&#10;Columns pasted straight out of Excel work fine."></textarea>
+      </div>
+      <div class="runbar" style="margin-top:14px">
+        <button class="run" id="toRunBtn" onclick="runTakeoffRead()" type="button"><span class="spin" id="toSpin"></span> Read the takeoff</button>
+        <button class="stopbtn" id="toStopBtn" onclick="stopTakeoff()" type="button">Stop</button>
+        <span class="hint" id="toHint" style="margin:0"></span>
+      </div>
+      <p class="hint">A spreadsheet gets read cell by cell, whatever shape it is in. Merged headers, a title block at the top, subtotal rows in the middle, three sheets in one workbook: it works out which rows are real material lines and leaves the rest alone. Quantities and units are kept exactly as you wrote them. Nothing is ever converted.</p>
+    </div>
+    <div id="toOut"></div>
+    <div id="toVersions"></div>
+  </div>
+
+  <!-- ============================ TAB 2: QUOTES ============================ -->
+  <div id="page-quotes" style="display:none">
+    <div class="note info">
+      <b>One slot per supplier, read one at a time.</b> That is on purpose: the quote that lands at 9pm the night before goes in a fresh slot and gets read on its own, without touching the three you did yesterday. Same file types as the takeoff, since suppliers send whatever they feel like sending.
+    </div>
+    <div class="card">
+      <h2>Supplier quotes</h2>
+      <div class="supgrid" id="supgrid"></div>
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn2" onclick="addSupplierSlot()" type="button">+ Add another supplier</button>
+        <span class="hint" style="margin:0">Three slots to start. Add more if you're bidding a job that pulls that many.</span>
+      </div>
+      <div style="margin-top:16px">
+        <label class="fld" for="quotePagesPerBatch">Pages per batch</label>
+        <input type="text" id="quotePagesPerBatch" value="6" style="max-width:80px">
+        <p class="hint">Each quote is split into chunks of this many pages and read one chunk at a time. Most quotes are a page or two, so this rarely matters. Lower it to 2 or 3 if a long multi-page quote keeps coming back incomplete.</p>
+      </div>
+    </div>
+    <div id="quoteResults"></div>
+  </div>
+
+  <!-- ======================= TAB 3: BID REQUIREMENTS ======================= -->
+  <div id="page-bidreq" style="display:none">
+    <div class="note info">
+      <b>This is what the bid documents require, not what you asked for.</b> You are not making changes here: it is a read of what the project itself demands, so the takeoff can be checked for anything the bid calls for and the takeoff missed. Most of it has already been read and stored by the Bid Requirements Reader, so it is a button, not an upload.
+    </div>
+    <div class="card">
+      <div class="collapsible-head open" onclick="toggleCollapse(this)">
+        <i class="chev">&#9662;</i>
+        <h2>Pull from the Bid Requirements Reader</h2>
+        <span class="collapsible-summary" id="reqSummary">nothing loaded</span>
+      </div>
+      <div class="collapsible-body" style="display:block">
+        <p class="hint" style="margin:0 0 12px">Uses the project name in Setup above. It has to match what was typed over there, exactly. This brings across the material-related spec findings and, separately, the kickoff sheet.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <button class="btn2 primary" onclick="pullFromPhase1(this)" type="button">Pull spec findings and kickoff sheet</button>
+          <span class="hint" style="margin:0" id="pullMsg"></span>
+        </div>
+        <div id="reqOut"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="collapsible-head" onclick="toggleCollapse(this)">
+        <i class="chev">&#9662;</i>
+        <h2>Or read a fixture schedule directly</h2>
+        <span class="collapsible-summary" id="specSummary">nothing loaded</span>
+      </div>
+      <div class="collapsible-body" style="display:none">
+        <p class="hint" style="margin:0 0 12px">For the model-by-model compliance check you want the actual fixture schedule: tags, manufacturers, model numbers, and whether an approved equal is permitted. Spec findings alone will not carry model numbers. Excel, PDF, Word or a photo, same as everywhere else.</p>
+        <div class="toggle">
+          <button id="stab-file" class="on" onclick="setSpecMode('file')" type="button">Upload a file</button>
+          <button id="stab-text" onclick="setSpecMode('text')" type="button">Paste text</button>
+        </div>
+        <div id="specmode-file">
+          <div class="drop" id="specDrop">
+            <div class="big">Drop the fixture schedule or spec section here</div>
+            <div class="small">or click to choose &middot; Excel, PDF, Word, image</div>
+          </div>
+          <input type="file" id="specFile" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.webp" multiple style="display:none">
+          <div class="filelist" id="specFilelist"></div>
+        </div>
+        <div id="specmode-text" style="display:none">
+          <textarea id="specText" placeholder="Paste the fixture schedule, or the specified manufacturers and models."></textarea>
+        </div>
+        <div class="runbar" style="margin-top:14px">
+          <button class="btn2 primary" id="specRunBtn" onclick="runSpecRead()" type="button">Read the schedule</button>
+          <button class="stopbtn" id="specStopBtn" onclick="stopSpec()" type="button">Stop</button>
+          <span class="hint" id="specHint" style="margin:0"></span>
+        </div>
+        <div id="specOut"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ TAB 4: COMPARE ============================ -->
+  <div id="page-compare" style="display:none">
+    <div class="card">
+      <h2>Run the comparison</h2>
+      <div id="cmpReadiness"></div>
+      <div class="runbar" style="margin-top:6px">
+        <button class="run" id="cmpBtn" onclick="runCompare()" type="button">
+          <span class="spin" id="cmpSpin"></span> Compare the quotes
+        </button>
+        <button class="stopbtn" id="cmpStopBtn" onclick="stopCompare()" type="button">Stop</button>
+      </div>
+      <div class="progline" id="cmpProg"></div>
+      <p class="hint" style="margin-top:12px"><b>Two passes, both anchored on the takeoff.</b> The first walks every takeoff line against what each supplier actually sent, one material category at a time, so each pass stays small enough to be accurate and a copper line is never asked to match itself against a toilet. The second is the one nobody does by hand: it checks the takeoff itself against what the bid documents, the schedule and the kickoff sheet call for. An item that never made it onto the takeoff will be missing from every quote and will look perfectly clean in a price comparison, so it has to be caught here or not at all.</p>
+    </div>
+    <div id="cmpErr"></div>
+    <div id="cmpResults"></div>
+  </div>
+
+  <!-- ============================ TAB 5: EXCEPTIONS ============================ -->
+  <div id="page-exceptions" style="display:none">
+    <div class="note info">
+      <b>This is the screen that matters.</b> Everything the tool could resolve on its own is already gone from this list. What's left is what needs your judgment, sorted worst first. Two kinds sit here: <b>quote issues</b>, where a supplier's line does not square with the takeoff, and <b>takeoff gaps</b>, where the bid requires something the takeoff has no line for. The second kind is the expensive one, because no supplier will ever flag it for you.
+    </div>
+    <div id="excEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Read the quotes on tab 1, then run the comparison on tab 3.</p></div>
+    <div id="excResults"></div>
+  </div>
+
+  <!-- ============================ TAB ASK ============================ -->
+  <div id="page-ask" style="display:none">
+    <div class="card">
+      <h2>Ask about these quotes</h2>
+      <p class="hint" style="margin:0 0 12px">Answers come only from what has actually been read into this tab: the takeoff, the extracted quote lines, the schedule, the bid requirements, and the comparison result. It will tell you when something isn't in there rather than guessing.</p>
+      <textarea id="askQ" style="min-height:80px;font-family:var(--body);font-size:14px" placeholder="Who quoted all 20 valves?&#10;What did Supplier C substitute?&#10;Which takeoff items has nobody priced?"></textarea>
+      <div class="askrow">
+        <button class="btn2" onclick="fillAsk('Which takeoff lines did each supplier fail to quote?')" type="button">Who missed what</button>
+        <button class="btn2" onclick="fillAsk('List every substitution or non-specified model any supplier offered, and say which supplier.')" type="button">All substitutions</button>
+        <button class="btn2" onclick="fillAsk('What is excluded from each quote? Freight, tax, lead time, storage, offloading, warranty.')" type="button">Exclusions</button>
+        <button class="btn2" onclick="fillAsk('Where does a supplier quantity differ from the takeoff quantity for the same line?')" type="button">Quantity gaps</button>
+        <button class="btn2" onclick="fillAsk('What does the bid require that the takeoff has no line for?')" type="button">Takeoff gaps</button>
+      </div>
+      <div class="runbar" style="margin-top:14px">
+        <button class="btn2 primary" id="askBtn" onclick="runAsk()" type="button">Ask</button>
+        <button class="stopbtn" id="askStopBtn" onclick="stopAsk()" type="button">Stop</button>
+        <span class="hint" id="askHint" style="margin:0"></span>
+      </div>
+    </div>
+    <div id="askOut"></div>
+  </div>
+</div>
+
+<footer>
+  <p><b>How to read this:</b> every cell in the comparison carries a match badge. <b>EXACT</b> means the supplier's line matched the item outright. <b>EQUIV</b> means it matched a different description the tool believes is the same product. <b>SUB</b> means the supplier offered something other than what was asked for. <b>MISSING</b> means nobody found it on that supplier's quote. <b>UNCLEAR</b> means the tool would not commit, which is a deliberate answer, not a failure. The confidence figure next to a badge is the tool's own, and low confidence means go look.</p>
+  <p style="margin-top:8px"><b>The takeoff is the reference.</b> Every row, every match and every exception is measured against it, and every comparison is stamped with the takeoff version it was run on. Upload a revision and the tool tells you what moved and which cleared exceptions have gone stale, rather than quietly invalidating work you already did.</p>
+  <p style="margin-top:8px">Totals shown per supplier are the sum of what that supplier actually put on paper. They are <b>not</b> comparable to each other until the exceptions are cleared, because a cheaper quote is usually cheaper for a reason sitting in that list. The tool never picks a winner. It prepares and points. You approve. Modonix Phase 2, built alongside the Bid Requirements Reader and sharing its project storage.</p>
+</footer>
+
+<script>
+/* ============================================================================
+   Supplier Quote Comparison — Modonix Phase 2
+   Deliberately built on the same bones as the Bid Requirements Reader: same key
+   handling, same streaming/retry layer, same Worker, same project key. Two apps
+   that already speak the same storage format are already half-connected, which
+   is the whole point of keeping them separate for now.
+   ========================================================================== */
+const MODEL = "claude-sonnet-4-6";   // same model the Bid Requirements Reader uses
+const MAX_TOKENS = 20000;
+document.getElementById('modelchip').textContent = "model: " + MODEL;
+
+const CATEGORIES = ["Fixtures","Equipment","Pipe","Fittings","Valves","Hangers & Supports","Insulation","Specialties & Trim","Freight, Tax & Fees","Labor & Services","Other"];
+
+let suppliers = [];          // {id, name, mode, files:[{name,size,buf}], pasted, data, abort, running}
+let supplierSeq = 0;
+let specBasis = null;        // fixture/equipment schedule: {source, items, notes}
+let bidReq = null;           // pulled from the Bid Requirements Reader: {findings, kickoff_points, ...}
+let takeoffData = null;      // THE REFERENCE: {version, at, sources, items, hash, history, last_diff}
+let cmpData = null;          // {rows, exceptions, coverage, summary, _run}
+let specAbort = null, toAbort = null, cmpAbort = null, askAbort = null;
+let specMode = 'file', toMode = 'file';
+let specFiles = [], toFiles = [];
+let excFilter = 'all';
+let lastFailedSave = null;
+let askLog = [];
+
+/* ---------------------------------------------------------------- utilities */
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function slugify(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40) || 'x'; }
+function flash(btn,label){ if(!btn)return; const o=btn.textContent; btn.textContent=label||'Done ✓'; setTimeout(()=>btn.textContent=o,1500); }
+function money(n){
+  const v = Number(n);
+  if(!isFinite(v) || v === 0) return '';
+  return '$' + v.toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function num(n){ const v = Number(String(n==null?'':n).replace(/[^0-9.\-]/g,'')); return isFinite(v) ? v : 0; }
+function toggleCollapse(headEl){
+  const body = headEl.nextElementSibling;
+  if(!body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  headEl.classList.toggle('open', !open);
+}
+function setPageTab(p){
+  ['takeoff','quotes','bidreq','compare','exceptions','ask'].forEach(name=>{
+    const page = document.getElementById('page-'+name);
+    const tab = document.getElementById('ptab-'+name);
+    if(page) page.style.display = (name===p) ? 'block' : 'none';
+    if(tab) tab.classList.toggle('on', name===p);
+  });
+  if(p==='compare') renderReadiness();
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function fillAsk(q){ document.getElementById('askQ').value = q; }
+
+/* ------------------------------------------------------ key + worker memory */
+(function initRememberedKey(){
+  try{
+    const saved = localStorage.getItem('modonix_bid_reader_key');
+    if(saved){
+      document.getElementById('key').value = saved;
+      document.getElementById('rememberKey').checked = true;
+    }
+  }catch(e){ /* localStorage unavailable, ignore */ }
+})();
+document.getElementById('rememberKey').addEventListener('change', function(){
+  try{
+    if(this.checked) localStorage.setItem('modonix_bid_reader_key', document.getElementById('key').value.trim());
+    else localStorage.removeItem('modonix_bid_reader_key');
+  }catch(e){ /* ignore */ }
+});
+document.getElementById('key').addEventListener('input', function(){
+  try{ if(document.getElementById('rememberKey').checked) localStorage.setItem('modonix_bid_reader_key', this.value.trim()); }catch(e){ /* ignore */ }
+});
+(function initCloudWorkerUrl(){
+  try{
+    const saved = localStorage.getItem('modonix_cloud_worker_url');
+    if(saved) document.getElementById('cloudWorkerUrl').value = saved;
+    const savedProj = localStorage.getItem('modonix_last_project');
+    if(savedProj) document.getElementById('cloudProject').value = savedProj;
+  }catch(e){ /* ignore */ }
+})();
+document.getElementById('cloudWorkerUrl').addEventListener('input', function(){
+  try{ localStorage.setItem('modonix_cloud_worker_url', this.value.trim()); }catch(e){ /* ignore */ }
+});
+document.getElementById('cloudProject').addEventListener('input', function(){
+  try{ localStorage.setItem('modonix_last_project', this.value.trim()); }catch(e){ /* ignore */ }
+});
+function getKey(){ return document.getElementById('key').value.trim(); }
+function workerUrl(){ return document.getElementById('cloudWorkerUrl').value.trim().replace(/\/+$/,''); }
+function projectName(){ return document.getElementById('cloudProject').value.trim(); }
+
+/* --------------------------------------------------------------- cloud i/o */
+function cloudStatus(msg, isErr){
+  const el = document.getElementById('cloudStatus');
+  el.textContent = msg;
+  el.style.color = isErr ? '#B4451F' : '';
+}
+function showCloudFailBanner(msg){
+  document.getElementById('cloudFailText').textContent = msg;
+  document.getElementById('cloudFailBanner').style.display = 'block';
+}
+async function retryLastSave(btn){
+  if(!lastFailedSave){ document.getElementById('cloudFailBanner').style.display='none'; return; }
+  const o = btn.textContent; btn.textContent = 'Retrying…'; btn.disabled = true;
+  const ok = await saveToCloud(lastFailedSave.phase, lastFailedSave.data);
+  btn.textContent = o; btn.disabled = false;
+  if(ok) document.getElementById('cloudFailBanner').style.display = 'none';
+}
+// Saves the raw extracted data, not a formatted export. Round-trips perfectly, so it can be
+// pushed to the cloud later from anywhere without ever re-reading the original document.
+function downloadBackup(phase, data){
+  if(!data){ return; }
+  const project = projectName() || 'project';
+  const payload = { _phase: phase, _project: project, _savedAt: new Date().toISOString(), data };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = slugify(project)+'-'+slugify(phase)+'-backup.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+let autoBackupDownloadedForOutage = false;
+function autoBackupOnFirstFailure(phase, data){
+  if(autoBackupDownloadedForOutage) return;
+  autoBackupDownloadedForOutage = true;
+  downloadBackup(phase, data);
+}
+async function saveToCloud(phase, data){
+  const url = workerUrl(), project = projectName();
+  if(!project || !url){
+    lastFailedSave = { phase, data };
+    showCloudFailBanner('"'+phase+'" was NOT saved to the cloud — the '+(!project?'Project name':'Worker URL')+' box in Setup is empty. This tab\'s results are still fine locally; download the backup so nothing is lost.');
+    autoBackupOnFirstFailure(phase, data);
+    return false;
+  }
+  try{
+    const res = await fetch(url + '/save', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ project_name: project, phase, data })
+    });
+    if(res.ok){
+      cloudStatus('Saved "'+phase+'" to the cloud just now.');
+      refreshProjectSuggestions();
+      lastFailedSave = null;
+      autoBackupDownloadedForOutage = false;
+      document.getElementById('cloudFailBanner').style.display = 'none';
+      return true;
+    }
+    cloudStatus('Cloud save failed (status '+res.status+'). This tab\'s results are still fine locally.', true);
+    lastFailedSave = { phase, data };
+    showCloudFailBanner('"'+phase+'" was NOT saved to the cloud (status '+res.status+'). Download the backup now so this result isn\'t lost, then check the Worker URL and your connection.');
+    autoBackupOnFirstFailure(phase, data);
+    return false;
+  }catch(e){
+    cloudStatus('Could not reach the Worker to save. This tab\'s results are still fine locally.', true);
+    lastFailedSave = { phase, data };
+    showCloudFailBanner('"'+phase+'" was NOT saved to the cloud — could not reach the Worker. This happens behind a VPN or a restrictive network. Download the backup now so this result isn\'t lost.');
+    autoBackupOnFirstFailure(phase, data);
+    return false;
+  }
+}
+async function refreshProjectSuggestions(){
+  const url = workerUrl();
+  if(!url) return;
+  try{
+    const res = await fetch(url + '/projects');
+    if(!res.ok) return;
+    const body = await res.json();
+    const names = (body.results||[]).map(r=>r.project_name).filter(Boolean);
+    const list = document.getElementById('projectSuggestions');
+    list.innerHTML = '';
+    names.forEach(name=>{ const o=document.createElement('option'); o.value=name; list.appendChild(o); });
+    const h = document.getElementById('projectSuggestHint');
+    h.textContent = names.length ? ('Start typing to see suggestions from '+names.length+' saved project'+(names.length===1?'':'s')+'. Projects from the Bid Requirements Reader show up here too.') : '';
+  }catch(e){ /* suggestions are a convenience, never a hard failure */ }
+}
+refreshProjectSuggestions();
+
+// Pulls every row for the project and hands back {latestByPhase, rows}. Rows come back
+// newest-first, so the first row seen for a phase is the current one.
+async function fetchProjectRows(){
+  const url = workerUrl(), project = projectName();
+  if(!url) throw new Error('Enter the Worker URL in Setup first.');
+  if(!project) throw new Error('Enter the project name in Setup first.');
+  const res = await fetch(url + '/load?project=' + encodeURIComponent(project));
+  if(!res.ok) throw new Error('The Worker answered with status '+res.status+'.');
+  const body = await res.json();
+  const rows = body.results || [];
+  const latestByPhase = {};
+  rows.forEach(r=>{ if(!latestByPhase[r.phase]) latestByPhase[r.phase] = r; });
+  return { rows, latestByPhase };
+}
+// The Bid Requirements Reader saves big extractions as one small row per batch
+// ("spec_extraction_items:p001835") plus a status row. This stitches them back together,
+// and falls back to the old all-in-one-row format automatically.
+function reconstructFromItemRows(latestByPhase, basePhase){
+  const progressRow = latestByPhase[basePhase];
+  const meta = progressRow ? JSON.parse(progressRow.data) : null;
+  const itemKeys = Object.keys(latestByPhase).filter(k=>k.indexOf(basePhase+'_items:')===0).sort();
+  if(itemKeys.length){
+    let items = [];
+    itemKeys.forEach(k=>{ const b = JSON.parse(latestByPhase[k].data); items = items.concat(b.items||[]); });
+    return meta ? Object.assign({}, meta, { items }) : { items };
+  }
+  return meta;
+}
+async function loadCloudProject(btn){
+  const o = btn.textContent; btn.disabled = true; btn.textContent = 'Loading…';
+  try{
+    const { latestByPhase } = await fetchProjectRows();
+    const loaded = [];
+    // Phase 2's own saved work
+    suppliers.forEach(s=>{ s.data = null; });
+    const supKeys = Object.keys(latestByPhase).filter(k=>k.indexOf('p2_quote:')===0);
+    if(supKeys.length){
+      suppliers = [];
+      supplierSeq = 0;
+      supKeys.forEach(k=>{
+        const parsed = JSON.parse(latestByPhase[k].data);
+        const s = newSupplierSlot(parsed.supplier || k.replace('p2_quote:',''));
+        s.data = parsed;
+      });
+      while(suppliers.length < 3) newSupplierSlot('');
+      renderSuppliers();
+      renderQuoteResults();
+      loaded.push(supKeys.length+' quote'+(supKeys.length===1?'':'s'));
+    }
+    if(latestByPhase.p2_spec_basis){
+      specBasis = JSON.parse(latestByPhase.p2_spec_basis.data);
+      renderSpecOut(); loaded.push('spec basis');
+    }
+    if(latestByPhase.p2_takeoff){
+      takeoffData = JSON.parse(latestByPhase.p2_takeoff.data);
+      renderToOut(); loaded.push('takeoff v'+(takeoffData.version||1));
+    }
+    if(latestByPhase.p2_bid_requirements){
+      bidReq = JSON.parse(latestByPhase.p2_bid_requirements.data);
+      renderReqOut(); loaded.push('bid requirements');
+    }
+    if(latestByPhase.p2_comparison){
+      cmpData = JSON.parse(latestByPhase.p2_comparison.data);
+      renderCompare(); renderExceptions(); loaded.push('comparison');
+    }
+    // Flag that there is Bid Requirements Reader data sitting here waiting to be pulled.
+    const p1 = reconstructFromItemRows(latestByPhase, 'spec_extraction');
+    const msgEl = document.getElementById('pullMsg');
+    if(msgEl && p1 && (p1.items||[]).length && !bidReq){
+      msgEl.textContent = 'Bid Requirements Reader data found for this project ('+p1.items.length+' findings)'+(latestByPhase.kickoff_sheet?' plus a kickoff sheet':'')+'. Click the button to pull it in.';
+    }
+    updateCounts();
+    cloudStatus(loaded.length ? ('Loaded: '+loaded.join(', ')+'.') : 'No Phase 2 data saved for this project yet. That is normal for a new job.');
+  }catch(e){
+    cloudStatus(e.message, true);
+  }finally{
+    btn.disabled = false; btn.textContent = o;
+  }
+}
+async function importBackup(){
+  const msgEl = document.getElementById('backupMsg');
+  msgEl.innerHTML = '';
+  const fileInput = document.getElementById('backupFile');
+  if(!fileInput.files.length){ msgEl.innerHTML = '<div class="note err" style="margin-top:10px"><b>Hold on.</b> Choose a backup .json file first.</div>'; return; }
+  try{
+    const payload = JSON.parse(await fileInput.files[0].text());
+    if(!payload._phase || payload.data === undefined) throw new Error("This doesn't look like a valid backup file — it's missing the expected fields.");
+    if(!workerUrl()){ msgEl.innerHTML = '<div class="note err" style="margin-top:10px"><b>Hold on.</b> Enter the Worker URL in Setup first.</div>'; return; }
+    if(!projectName() && payload._project) document.getElementById('cloudProject').value = payload._project;
+    if(!projectName()){ msgEl.innerHTML = '<div class="note err" style="margin-top:10px"><b>Hold on.</b> Type the project name above first. This backup suggests: "'+esc(payload._project||'unknown')+'".</div>'; return; }
+    const res = await fetch(workerUrl()+'/save', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ project_name: projectName(), phase: payload._phase, data: payload.data })
+    });
+    msgEl.innerHTML = res.ok
+      ? '<div class="note ok" style="margin-top:10px"><b>Pushed.</b> "'+esc(payload._phase)+'" for "'+esc(projectName())+'" is now saved to the cloud.</div>'
+      : '<div class="note err" style="margin-top:10px"><b>Hold on.</b> Push failed (status '+res.status+'). Try again, or from a different network if this one is blocked.</div>';
+    if(res.ok) refreshProjectSuggestions();
+  }catch(e){
+    msgEl.innerHTML = '<div class="note err" style="margin-top:10px"><b>Hold on.</b> '+esc(e.message)+'</div>';
+  }
+}
+
+/* ------------------------------------------------------------- PDF handling */
+function arrayBufferToBase64(bytes){
+  let binary = '';
+  const chunkSize = 0x8000;
+  for(let i=0;i<bytes.length;i+=chunkSize) binary += String.fromCharCode.apply(null, bytes.subarray(i, i+chunkSize));
+  return btoa(binary);
+}
+let _pdfjsLoadPromise = null;
+function getPdfJs(){
+  if(!_pdfjsLoadPromise){
+    _pdfjsLoadPromise = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.1.200/pdf.min.mjs').then(mod=>{
+      mod.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.1.200/pdf.worker.min.mjs';
+      return mod;
+    });
+  }
+  return _pdfjsLoadPromise;
+}
+async function splitIntoTextBatches(fileBuf, pagesPerBatch){
+  const pdfjsLib = await getPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: fileBuf.slice(0) }).promise;
+  const totalPages = pdf.numPages;
+  const pageTexts = [];
+  let totalChars = 0;
+  for(let p=1; p<=totalPages; p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const text = content.items.map(it=>it.str).join(' ').replace(/[ \t]+/g,' ').trim();
+    pageTexts.push(text);
+    totalChars += text.length;
+  }
+  const avgCharsPerPage = totalPages ? (totalChars/totalPages) : 0;
+  const step = Math.max(1, pagesPerBatch|0);
+  const batches = [];
+  for(let start=1; start<=totalPages; start+=step){
+    const end = Math.min(start+step-1, totalPages);
+    let blob = '';
+    for(let p=start;p<=end;p++) blob += '--- PAGE '+p+' ---\n'+(pageTexts[p-1] || '(no extractable text on this page)')+'\n\n';
+    batches.push({ text: blob, startPage:start, endPage:end, totalPages });
+  }
+  return { batches: batches.length?batches:[{text:'(document has no pages)',startPage:1,endPage:1,totalPages:1}], avgCharsPerPage };
+}
+const MAX_IMAGE_DIMENSION_PX = 1568; // Claude's vision works natively up to about this size
+async function splitIntoImageBatches(fileBuf, pagesPerBatch){
+  const pdfjsLib = await getPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: fileBuf.slice(0) }).promise;
+  const totalPages = pdf.numPages;
+  const step = Math.max(1, pagesPerBatch|0);
+  const batches = [];
+  for(let start=1; start<=totalPages; start+=step){
+    const end = Math.min(start+step-1, totalPages);
+    const images = [];
+    for(let p=start; p<=end; p++){
+      const page = await pdf.getPage(p);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const longSide = Math.max(baseViewport.width, baseViewport.height);
+      const scale = Math.min(1, MAX_IMAGE_DIMENSION_PX / longSide);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(viewport.width));
+      canvas.height = Math.max(1, Math.round(viewport.height));
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      images.push({ data: canvas.toDataURL('image/jpeg', 0.9).split(',')[1], mediaType: 'image/jpeg' });
+    }
+    batches.push({ images, startPage:start, endPage:end, totalPages });
+  }
+  return batches.length ? batches : [{ images:[], startPage:1, endPage:1, totalPages:1 }];
+}
+
+
+/* ====================== UNIVERSAL FILE INGEST ============================
+   Suppliers, estimators and engineers all send whatever they feel like
+   sending. Excel is what the takeoff actually arrives as, so that is the path
+   this is built around, but a PDF, a Word file, a plain text export and a
+   phone photo of a marked-up sheet all have to land in the same place. One
+   reader, used by every tab, so a file type never decides which feature works.
+   ====================================================================== */
+const SHEET_EXT = /\.(xlsx|xlsm|xlsb|xls|csv|tsv)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp)$/i;
+const DOCX_EXT  = /\.(docx|doc)$/i;
+const PDF_EXT   = /\.pdf$/i;
+const TEXT_EXT  = /\.(txt|md|json)$/i;
+function fileKind(name){
+  if(SHEET_EXT.test(name)) return 'sheet';
+  if(PDF_EXT.test(name)) return 'pdf';
+  if(DOCX_EXT.test(name)) return 'docx';
+  if(IMAGE_EXT.test(name)) return 'image';
+  if(TEXT_EXT.test(name)) return 'text';
+  return 'unknown';
+}
+function acceptsFile(name){ return fileKind(name) !== 'unknown'; }
+function imageMediaType(name){
+  const m = (name.match(/\.(png|jpe?g|webp|gif|bmp)$/i)||[])[1] || 'jpeg';
+  const ext = m.toLowerCase();
+  return ext==='png' ? 'image/png' : ext==='webp' ? 'image/webp' : ext==='gif' ? 'image/gif' : 'image/jpeg';
+}
+// Every sheet in the workbook, flattened to CSV with the cell grid intact. Deliberately not
+// parsed into columns here: a real takeoff has a title block, merged headers, blank spacer
+// rows and subtotals scattered through it, and no fixed column mapping survives contact with
+// the next estimator's sheet. Hand over the grid and let the read work out what is a material
+// line, exactly the way a person scanning the printout would.
+function sheetsFromWorkbook(buf, fileName){
+  if(typeof XLSX === 'undefined') throw new Error('The spreadsheet library did not load, so Excel files cannot be read right now. Check the connection and reload the page.');
+  const wb = XLSX.read(new Uint8Array(buf), { type:'array', cellDates:true });
+  return wb.SheetNames.map(nm=>{
+    const ws = wb.Sheets[nm];
+    const csv = XLSX.utils.sheet_to_csv(ws, { blankrows:false, rawNumbers:false });
+    return { sheet:nm, rows: csv.split('\n').filter(r=>r.replace(/,/g,'').trim().length), file:fileName };
+  }).filter(s=>s.rows.length);
+}
+// A .docx is a zip with an XML document inside. Paragraph and table structure is preserved as
+// newlines and tabs so a schedule laid out as a Word table still reads as a table.
+async function textFromDocx(buf){
+  if(typeof JSZip === 'undefined') throw new Error('The Word reader did not load, so .docx files cannot be read right now. Check the connection and reload the page, or save the file as Excel or PDF.');
+  const zip = await JSZip.loadAsync(buf);
+  const entry = zip.file('word/document.xml');
+  if(!entry) throw new Error('That does not look like a Word .docx file inside. If it is an older .doc, save it as .docx or PDF first.');
+  let xml = await entry.async('string');
+  xml = xml
+    .replace(/<w:tab[^>]*\/>/g, '\t')
+    .replace(/<w:br[^>]*\/>/g, '\n')
+    .replace(/<\/w:p>/g, '\n')
+    .replace(/<\/w:tc>/g, '\t')
+    .replace(/<\/w:tr>/g, '\n')
+    .replace(/<[^>]+>/g, '');
+  return xml
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'")
+    .replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+function chunkRows(rows, size){
+  const out = [];
+  for(let i=0;i<rows.length;i+=size) out.push({ rows: rows.slice(i,i+size), from:i+1, to:Math.min(i+size,rows.length) });
+  return out;
+}
+// Turns one file of any supported type into a list of ready-to-send jobs.
+// `header` is the instruction line that goes with every chunk, so the read always knows
+// what it is looking at and which part of the document it has.
+async function buildJobsFromFile(file, header, opts){
+  opts = opts || {};
+  const pagesPerBatch = opts.pagesPerBatch || 5;
+  const rowsPerBatch = opts.rowsPerBatch || 120;
+  const kind = fileKind(file.name);
+  const jobs = [];
+  const warn = [];
+  if(kind === 'sheet'){
+    const sheets = sheetsFromWorkbook(file.buf, file.name);
+    if(!sheets.length) warn.push('No rows with any content were found in '+file.name+'.');
+    sheets.forEach(sh=>{
+      // The first few rows carry the column headings almost every time, so they ride along
+      // with every later chunk. Without that, chunk 2 onwards is a wall of bare numbers.
+      const preamble = sh.rows.slice(0, Math.min(6, sh.rows.length)).join('\n');
+      chunkRows(sh.rows, rowsPerBatch).forEach((c,ci)=>{
+        const body = (ci>0 ? 'TOP OF THIS SHEET, REPEATED FOR CONTEXT:\n'+preamble+'\n\nROWS '+c.from+' TO '+c.to+':\n' : '')+c.rows.join('\n');
+        jobs.push({ label: file.name+' · sheet "'+sh.sheet+'" rows '+c.from+'-'+c.to,
+          content:[{ type:'text', text: header+'\n\nSOURCE: spreadsheet "'+file.name+'", sheet "'+sh.sheet+'", rows '+c.from+' to '+c.to+' of '+sh.rows.length+'. This is the raw cell grid as comma separated values, exactly as laid out in the sheet. Title blocks, blank spacer rows, section headings and subtotal rows are all normal here: work out which rows are real material lines and ignore the rest.\n\n'+body }] });
+      });
+    });
+  } else if(kind === 'pdf'){
+    const { batches, avgCharsPerPage } = await splitIntoTextBatches(file.buf, pagesPerBatch);
+    if(avgCharsPerPage < 40){
+      warn.push(file.name+' has almost no extractable text, so it is being read from the page images instead. That is slower but it handles scans and photos.');
+      const imgBatches = await splitIntoImageBatches(file.buf, Math.max(1, Math.min(3, pagesPerBatch)));
+      imgBatches.forEach(b=>{
+        const content = b.images.map(img=>({ type:'image', source:{ type:'base64', media_type:img.mediaType, data:img.data } }));
+        content.push({ type:'text', text: header+'\n\nSOURCE: scanned document "'+file.name+'", pages '+b.startPage+' to '+b.endPage+' of '+b.totalPages+'. Read it from the images.' });
+        jobs.push({ label: file.name+' p'+b.startPage+'-'+b.endPage+' (scanned)', content });
+      });
+    } else {
+      batches.forEach(b=>jobs.push({ label: file.name+' p'+b.startPage+'-'+b.endPage,
+        content:[{ type:'text', text: header+'\n\nSOURCE: "'+file.name+'", pages '+b.startPage+' to '+b.endPage+' of '+b.totalPages+'.\n\n'+b.text }] }));
+    }
+  } else if(kind === 'docx'){
+    const text = await textFromDocx(file.buf);
+    const rows = text.split('\n');
+    chunkRows(rows, rowsPerBatch*2).forEach(c=>jobs.push({ label: file.name+' lines '+c.from+'-'+c.to,
+      content:[{ type:'text', text: header+'\n\nSOURCE: Word document "'+file.name+'", lines '+c.from+' to '+c.to+'. Table cells are separated by tabs and table rows by newlines.\n\n'+c.rows.join('\n') }] }));
+  } else if(kind === 'image'){
+    jobs.push({ label: file.name+' (image)', content:[
+      { type:'image', source:{ type:'base64', media_type: imageMediaType(file.name), data: arrayBufferToBase64(new Uint8Array(file.buf)) } },
+      { type:'text', text: header+'\n\nSOURCE: a photo or scan, "'+file.name+'". It may be handwritten or marked up by hand. Read what is actually legible and do not guess at anything that is not. Where a number or a word genuinely cannot be made out, leave the field blank and say so in the notes rather than inventing a plausible value.' }
+    ]});
+  } else if(kind === 'text'){
+    const text = new TextDecoder().decode(new Uint8Array(file.buf));
+    const rows = text.split('\n');
+    chunkRows(rows, rowsPerBatch*2).forEach(c=>jobs.push({ label: file.name+' lines '+c.from+'-'+c.to,
+      content:[{ type:'text', text: header+'\n\nSOURCE: text file "'+file.name+'", lines '+c.from+' to '+c.to+'.\n\n'+c.rows.join('\n') }] }));
+  } else {
+    warn.push('Skipped '+file.name+': that file type cannot be read. Excel, PDF, Word, plain text and images all work.');
+  }
+  return { jobs, warn };
+}
+async function buildJobsFromFiles(files, header, opts){
+  let jobs = [], warn = [];
+  for(const f of files){
+    const r = await buildJobsFromFile(f, header, opts);
+    jobs = jobs.concat(r.jobs); warn = warn.concat(r.warn);
+  }
+  return { jobs, warn };
+}
+
+/* ------------------------------------------------------------- API plumbing */
+function raceWithStop(promise, signal){
+  if(!signal) return promise;
+  if(signal.aborted) return Promise.reject(new DOMException('Stopped by user','AbortError'));
+  return new Promise((resolve, reject)=>{
+    const onAbort = ()=>{ reject(new DOMException('Stopped by user','AbortError')); };
+    signal.addEventListener('abort', onAbort, {once:true});
+    promise.then(
+      v=>{ signal.removeEventListener('abort', onAbort); resolve(v); },
+      e=>{ signal.removeEventListener('abort', onAbort); reject(e); }
+    );
+  });
+}
+function sleepWithStop(ms, signal){
+  return new Promise((resolve, reject)=>{
+    if(signal && signal.aborted){ reject(new DOMException('Stopped by user','AbortError')); return; }
+    const t = setTimeout(()=>{ if(signal) signal.removeEventListener('abort', onAbort); resolve(); }, ms);
+    function onAbort(){ clearTimeout(t); reject(new DOMException('Stopped by user','AbortError')); }
+    if(signal) signal.addEventListener('abort', onAbort, {once:true});
+  });
+}
+// Browsers never time out a hanging fetch on their own. This turns an invisible permanent
+// hang into a real, visible failure after a reasonable wait.
+function timeoutAfter(ms, signal){
+  return new Promise((resolve, reject)=>{
+    if(signal && signal.aborted){ reject(new DOMException('Stopped by user','AbortError')); return; }
+    const t = setTimeout(()=>{ reject(new Error('REQUEST_TIMEOUT')); }, ms);
+    if(signal) signal.addEventListener('abort', ()=>{ clearTimeout(t); }, {once:true});
+  });
+}
+// Streams the response as Server-Sent Events rather than waiting for one complete body.
+// A slow-but-working generation keeps bytes flowing and is never mistaken for a stall;
+// only a true silence triggers the timeout, and that clock resets on every chunk.
+async function streamOneAttempt(key, content, systemPrompt, signal, idleTimeoutMs){
+  const fetchPromise = fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{
+      "content-type":"application/json",
+      "x-api-key":key,
+      "anthropic-version":"2023-06-01",
+      "anthropic-dangerous-direct-browser-access":"true"
+    },
+    body:JSON.stringify({ model:MODEL, max_tokens:MAX_TOKENS, system:systemPrompt, messages:[{role:"user",content}], stream:true })
+  });
+  const res = await Promise.race([ raceWithStop(fetchPromise, signal), timeoutAfter(idleTimeoutMs, signal) ]);
+  if(!res.ok || !res.body) return res;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '', fullText = '', stopReason = null, sawErrorEvent = null;
+  try{
+    while(true){
+      let chunk;
+      try{
+        chunk = await Promise.race([ raceWithStop(reader.read(), signal), timeoutAfter(idleTimeoutMs, signal) ]);
+      }catch(e){
+        if(e.message === 'REQUEST_TIMEOUT'){ try{ reader.cancel(); }catch(_){} }
+        throw e;
+      }
+      const { done, value } = chunk;
+      if(done) break;
+      buf += decoder.decode(value, {stream:true});
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if(!payload || payload === '[DONE]') continue;
+        let evt;
+        try{ evt = JSON.parse(payload); }catch(_){ continue; }
+        if(evt.type === 'content_block_delta' && evt.delta && evt.delta.type === 'text_delta') fullText += evt.delta.text;
+        else if(evt.type === 'message_delta' && evt.delta && evt.delta.stop_reason) stopReason = evt.delta.stop_reason;
+        else if(evt.type === 'error') sawErrorEvent = evt.error || evt;
+      }
+    }
+  }catch(e){
+    if(e.message === 'REQUEST_TIMEOUT' && fullText) throw Object.assign(new Error('REQUEST_TIMEOUT'), { partialText: fullText });
+    throw e;
+  }
+  if(sawErrorEvent) return new Response(JSON.stringify(sawErrorEvent), {status: 529, headers:{'content-type':'application/json'}});
+  return new Response(JSON.stringify({ content:[{type:'text', text: fullText}], stop_reason: stopReason }), {status:200, headers:{'content-type':'application/json'}});
+}
+async function fetchWithRetry(key, content, systemPrompt, signal, hintElId){
+  const maxAttempts = 4;
+  const delays = [5000, 15000, 30000];
+  const retryableStatus = new Set([429, 500, 502, 503, 529]);
+  const IDLE_TIMEOUT_MS = 90000;
+  for(let attempt=0; attempt<maxAttempts; attempt++){
+    let res;
+    try{
+      res = await streamOneAttempt(key, content, systemPrompt, signal, IDLE_TIMEOUT_MS);
+    }catch(e){
+      if(e.message !== 'REQUEST_TIMEOUT') throw e;
+      if(attempt === maxAttempts-1) throw new Error("The request stalled — no data came back at all for over 90 seconds, "+maxAttempts+" attempts in a row. That is a dead connection rather than a slow answer. Try again once the connection is stable, or with a smaller batch.");
+      const waitMs = delays[Math.min(attempt, delays.length-1)];
+      setHint(hintElId, 'That request stalled with no data at all, waiting '+Math.round(waitMs/1000)+'s and retrying automatically (attempt '+(attempt+2)+' of '+maxAttempts+')…');
+      await sleepWithStop(waitMs, signal);
+      continue;
+    }
+    if(!retryableStatus.has(res.status) || attempt === maxAttempts-1) return res;
+    const retryAfterHeader = res.headers.get('retry-after');
+    const waitMs = retryAfterHeader ? (parseFloat(retryAfterHeader)*1000) : delays[Math.min(attempt, delays.length-1)];
+    const reason = res.status===429 ? 'Rate limited' : 'Anthropic server hiccup (status '+res.status+')';
+    setHint(hintElId, reason+', waiting '+Math.round(waitMs/1000)+'s and retrying automatically (attempt '+(attempt+2)+' of '+maxAttempts+')…');
+    await sleepWithStop(waitMs, signal);
+  }
+}
+function setHint(id, msg){ const el = id ? document.getElementById(id) : null; if(el) el.textContent = msg; }
+function parseJSON(t){
+  if(!t) return null;
+  let s = String(t).trim();
+  s = s.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+  try{ return JSON.parse(s); }catch(e){}
+  const first = s.indexOf('{'), last = s.lastIndexOf('}');
+  if(first>=0 && last>first){ try{ return JSON.parse(s.slice(first,last+1)); }catch(e){} }
+  return null;
+}
+// Retries the WHOLE request if the API answers fine but the content doesn't parse as JSON.
+// A small formatting slip in the model's own output is an occasional, self-correcting failure.
+async function fetchAndParseJSON(key, content, systemPrompt, signal, hintElId, contextLabel){
+  const maxParseAttempts = 3;
+  let lastText = '';
+  for(let attempt=0; attempt<maxParseAttempts; attempt++){
+    const res = await fetchWithRetry(key, content, systemPrompt, signal, hintElId);
+    if(!res.ok){
+      const errtxt = await res.text();
+      throw new Error(contextLabel+" — API "+res.status+": "+errtxt.slice(0,300));
+    }
+    const data = await res.json();
+    const text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim();
+    lastText = text;
+    const parsed = parseJSON(text);
+    if(parsed) return parsed;
+    if(data.stop_reason==='max_tokens') throw new Error("The response for "+contextLabel+" got cut off before it finished. Try again with a smaller batch, or split this supplier's quote up.");
+    if(attempt === maxParseAttempts-1) break;
+    setHint(hintElId, "That response wasn't quite readable, retrying automatically (attempt "+(attempt+2)+" of "+maxParseAttempts+")…");
+    await sleepWithStop(3000, signal);
+  }
+  throw new Error("Could not read the response for "+contextLabel+" after "+maxParseAttempts+" tries. Raw output: "+lastText.slice(0,300));
+}
+
+/* ================================ PROMPTS ================================= */
+const SYSTEM_QUOTE = `You are transcribing a supplier's material quote for a mechanical/plumbing construction bid into structured data. You are a transcriber first and an interpreter second. An estimator is going to make a real money decision from this, so a guess dressed up as a fact is worse than an honest blank.
+
+RULES:
+1. Transcribe what is actually printed. Never invent a line, a quantity, a model number, or a price. If a field is not on the page, return an empty string for it (or 0 for a number), not a plausible value.
+2. "description" must be the supplier's own wording, as close to verbatim as you can get it, abbreviations and all. Do not clean it up, expand it, or standardize it. The whole downstream comparison depends on seeing what they actually wrote.
+3. Pull "manufacturer" and "model" out into their own fields ONLY when the quote actually names them. A model number buried in the description still counts, but do not infer a manufacturer from a product type.
+4. "qty" is the number as printed. "uom" is the unit as printed (EA, LF, FT, C (per hundred), M (per thousand), LOT, BOX, LENGTH, ROLL, etc.). Never convert units. Never normalize per-hundred pricing into per-foot pricing. If the unit is written in a way you cannot read confidently, put what is printed and set "qty_unclear": true.
+5. Set "is_package": true when a line covers a bundle of things rather than one item type — "WC package", "trim kit", "1 LOT", "fixture package", a line whose quantity is 1 but whose description clearly covers many units. Put whatever the quote says the package contains in "package_contents", else empty string.
+6. "substitution_language" captures any wording on that line signalling the supplier is offering something other than a named product: "or equal", "in lieu of", "alternate", "substitute", "as manufactured by", "approved equal". Copy the phrase. Empty string if there is none.
+7. Prices are plain numbers, no currency symbols, no commas. If only an extended price is shown, fill "extended_price" and leave "unit_price" at 0. Do not calculate one from the other.
+8. "category" must be exactly one of: Fixtures, Equipment, Pipe, Fittings, Valves, Hangers & Supports, Insulation, Specialties & Trim, Freight, Tax & Fees, Labor & Services, Other. Fixtures means plumbing fixtures and their trim (water closets, lavatories, sinks, faucets, carriers, drains). Equipment means water heaters, pumps, boilers, backflow preventers, and similar. When a line honestly does not fit, use Other rather than forcing it.
+9. Quote-level terms matter as much as the line items. Capture exclusions, what is NOT included, freight/shipping terms, tax treatment, lead times, price validity, storage/offloading, and any conditions. An estimator gets hurt by what is missing from a quote far more often than by what is on it.
+10. No em dashes anywhere in your output.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{
+  "supplier": "the supplier/vendor company name as printed on this quote, empty string if not visible on these pages",
+  "quote_meta": {
+    "quote_number": "", "quote_date": "", "valid_until": "", "contact": "",
+    "freight": "what the quote says about freight/shipping, empty if silent",
+    "tax": "what the quote says about sales tax, empty if silent",
+    "lead_time": "", "terms": "",
+    "exclusions": ["each thing the quote explicitly excludes or says is not included"],
+    "notes": ["any other condition or caveat an estimator would want to know about"]
+  },
+  "totals_stated": { "subtotal": 0, "tax": 0, "freight": 0, "total": 0 },
+  "items": [
+    { "line_ref": "the quote's own line number/tag if it has one, else empty string",
+      "description": "verbatim", "category": "one of the listed categories",
+      "qty": 0, "uom": "", "qty_unclear": false,
+      "manufacturer": "", "model": "",
+      "unit_price": 0, "extended_price": 0,
+      "is_package": false, "package_contents": "",
+      "substitution_language": "", "notes": "anything on the line that does not fit the fields above",
+      "page": 0 }
+  ]
+}`;
+
+const SYSTEM_SPEC_BASIS = `You are pulling the material requirements out of a construction specification or fixture schedule, so they can be checked against what suppliers actually quoted. Only the material side matters here: what product, by whom, what model, how many if stated. Ignore submittal procedures, warranty language, execution and installation requirements, and anything else that is not a description of a product to be furnished.
+
+RULES:
+1. Extract only what the document actually states. Never invent a manufacturer, model, or quantity.
+2. One entry per specified product or fixture type. Keep the schedule's own tag (P-1, WC-1, L-2, EWC-1) in "tag" when it has one.
+3. "allows_equal" is true only when the document actually permits a substitution for that item — "or approved equal", "or equal", a list of multiple acceptable manufacturers. If the spec names one product with no such language, it is false, and that is a meaningful difference.
+4. "acceptable_manufacturers" lists every manufacturer the document names as acceptable for that item, including the basis-of-design one. Empty list if it names none.
+5. Quantities usually are NOT in a fixture schedule. Leave qty at 0 rather than guessing, and do not treat a missing quantity as a problem.
+6. Note any explicit requirement attached to the product itself: ADA compliance, flush rate/gpf, low-lead, ASSE listing, finish, rough-in. These are what a substitution quietly breaks.
+7. No em dashes.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{
+  "items": [
+    { "tag": "", "description": "what the item is, in the document's own terms",
+      "category": "one of: Fixtures, Equipment, Pipe, Fittings, Valves, Hangers & Supports, Insulation, Specialties & Trim, Freight, Tax & Fees, Labor & Services, Other",
+      "basis_of_design_manufacturer": "", "model": "",
+      "acceptable_manufacturers": [], "allows_equal": false,
+      "qty": 0, "uom": "",
+      "requirements": ["each explicit product requirement, short"],
+      "source": "spec section or page this came from" }
+  ],
+  "notes": ["anything about substitutions, approved equals, or product standards that applies across the board rather than to one item"]
+}`;
+
+const SYSTEM_TAKEOFF = `You are converting an estimator's own material takeoff into structured data. This takeoff is the reference document for the entire bid: it is the list of what the job actually needs, it is what gets sent to suppliers for pricing, and every later check is measured against it. Getting a quantity wrong here poisons everything downstream, so accuracy beats completeness and a blank beats a guess.
+
+The source is usually an Excel sheet, and real takeoff sheets are messy. Expect a title block or job header at the top, column headings that may sit several rows down or be spread over two rows, blank spacer rows, section headings like "UNDERGROUND" or "2ND FLOOR", subtotal and total rows in the middle and at the bottom, notes columns, and sometimes several sheets in one workbook. It may also arrive as a PDF, a Word table, plain text pasted out of a spreadsheet, or a photo of a marked-up printout.
+
+RULES:
+1. Work out which rows are real material lines and take only those. Skip title blocks, column headings, blank rows, section headings, subtotals, totals, and note rows. A section heading is context, not an item: do not turn "UNDERGROUND" into a line, but do use it to make the item's own description clearer if the description alone would be ambiguous.
+2. Transcribe. Never invent a line, a quantity or a unit. If a row is clearly a material line but has no quantity on it, take the line with qty 0 rather than dropping it, and say so in notes. A missing quantity is a real finding for the estimator, not something to quietly fill in.
+3. "description" is the estimator's own wording, verbatim. Do not clean it up, expand abbreviations or standardize it. If size, material and type live in separate columns, join them into one description in the order they appear, with single spaces, and do not add words that are not there.
+4. "qty" is the number as written and "uom" is the unit as written. Never convert. LF stays LF, EA stays EA, C stays C, and a quantity written as 1,250 is 1250 with the comma removed but nothing else changed. If a row shows both a count and a length, take the one the sheet is clearly pricing by and put the other in notes.
+5. Pull manufacturer and model into their own fields only where the sheet actually names them.
+6. "category" must be exactly one of: Fixtures, Equipment, Pipe, Fittings, Valves, Hangers & Supports, Insulation, Specialties & Trim, Freight, Tax & Fees, Labor & Services, Other. Where a line honestly does not fit, use Other rather than forcing it.
+7. If the same item genuinely appears twice on the sheet, for two different areas or floors, keep both lines. Do not merge them and do not add them together. The estimator organised it that way for a reason.
+8. On a handwritten or photographed sheet, read only what is actually legible. Where a digit or a word cannot be made out, leave the field blank and say what was unreadable in notes.
+9. No em dashes.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{
+  "items": [
+    { "description": "verbatim", "category": "", "qty": 0, "uom": "",
+      "manufacturer": "", "model": "",
+      "notes": "area or floor it belongs to, anything unreadable, anything on the row that does not fit the fields above" }
+  ],
+  "notes": ["anything about the sheet as a whole an estimator should know: a sheet that looked like a revision, a column you could not interpret, a section that appeared to be priced differently"]
+}`;
+
+const SYSTEM_COMPARE = `You are reconciling supplier quotes against an estimator's takeoff for one material category on a mechanical/plumbing bid.
+
+THE TAKEOFF IS THE REFERENCE. It is the estimator's own list of what the job needs and it is what went out for pricing. Every row you produce is anchored on a takeoff line. Suppliers routinely ignore the list they were sent and quote off their own count instead, so their line numbering, their wording, their units and their grouping will not line up with the takeoff. Making them line up is the entire job.
+
+You are given, for a single category: the takeoff lines (the reference), the scheduled/specified items if the project's fixture schedule was read (may be empty), and every line each supplier quoted in that category.
+
+THE RULE THAT MATTERS MOST: nothing is matched silently. Every supplier cell carries a match verdict, a confidence, and a one-line "why" naming the actual evidence you used. A confident wrong match is worse than an honest "unclear". When two lines might be the same product but you cannot tell from what is printed, the answer is "unclear", not a guess. That is a correct answer, not a failure.
+
+BUILDING THE ROWS:
+1. One row per takeoff line, in the order the takeoff has them. That is the reference and it does not get reordered or merged.
+2. Then add a row for any supplier line that does not belong to a takeoff line at all, with "required_source":"quotes only". A supplier quoting something nobody asked for is a real finding: it is either scope you missed or padding.
+3. Where the fixture schedule names a product for a takeoff line, put it in "spec_model" and set "allows_equal" from the schedule. Where it does not, leave them empty and false is not implied: use allows_equal true when the schedule is silent, since there is nothing to violate.
+4. Give every supplier a cell in every row, including suppliers who did not quote that item. That absence is the finding.
+
+MATCH VERDICTS, use exactly one:
+- "exact": the supplier quoted the named product, same manufacturer and model, or an unmistakably identical commodity description.
+- "equivalent": different wording, same product. Use when size, material, type and rating all line up even though the description reads differently. Say in "why" what lined up.
+- "substitution": the supplier is offering a different product than the takeoff or the schedule calls for. Different manufacturer, different model, a different material or rating, or explicit "or equal" wording. Not automatically bad, automatically a decision.
+- "missing": nothing on that supplier's quote covers this takeoff line.
+- "unclear": something is there but you cannot responsibly say what it covers. Lump and package lines, unreadable quantities, descriptions too vague to pin down.
+
+UNITS AND QUANTITIES:
+5. The takeoff's quantity and unit are the reference. Compare the supplier's against it, and never convert either one. If the takeoff says 500 LF and a supplier quotes 25 LENGTH, report both exactly as written and raise a UOM exception. Silently converting is how an estimator ends up off by a factor of a hundred.
+6. Only call something a quantity difference when the units genuinely match. Across different units it is a UOM finding, not a quantity finding.
+7. A supplier line with qty 1 covering many units (a package, a lot, a kit) is "unclear", never "exact", no matter how confident the description sounds.
+8. Where a supplier has clearly done their own takeoff and landed on a different count, that is a quantity exception against the takeoff, and it is worth flagging even when their number looks more sensible. The estimator decides whose count is right, not you.
+
+EXCEPTIONS, the part the estimator actually reads:
+9. Raise an exception ONLY where a human has to do something. Do not raise one for a clean match. A category where everything matches should return an empty exceptions list, and that is a good result.
+10. "kind" is exactly one of: MISSING, SUBSTITUTION, QUANTITY, PACKAGE, UOM, SPEC DEVIATION, EXTRA, EXCLUSION, AMBIGUOUS.
+11. "severity": "high" when it could cost real money or lose the bid. "medium" when it needs a phone call before the number is trusted. "low" for housekeeping.
+12. "ask" is the actual question to put to that supplier, written so the estimator can paste it into an email as is. Name the item, name the number, name what you need back.
+13. Never pick a winner, never total anything, never recommend a supplier.
+14. No em dashes anywhere in your output.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{
+  "rows": [
+    { "item": "short plain-language name for the thing itself",
+      "takeoff_line": "the takeoff's own description, verbatim, or empty string for a quotes-only row",
+      "tag": "schedule tag if there is one, else empty string",
+      "spec_model": "manufacturer and model the schedule specified, empty string if none",
+      "allows_equal": true,
+      "required_qty": 0, "required_uom": "",
+      "required_source": "takeoff | takeoff+schedule | quotes only",
+      "suppliers": [
+        { "supplier": "exact supplier name as given to you",
+          "match": "exact | equivalent | substitution | missing | unclear",
+          "confidence": "high | medium | low",
+          "quoted_as": "the supplier's verbatim line, empty string if missing",
+          "manufacturer": "", "model": "",
+          "qty": 0, "uom": "", "unit_price": 0, "extended_price": 0,
+          "why": "one short clause naming the evidence for this verdict" }
+      ],
+      "issues": ["short flags on this row, empty list if the row is clean"] }
+  ],
+  "exceptions": [
+    { "kind": "one of the listed kinds", "severity": "high | medium | low",
+      "suppliers": ["which supplier(s) this is about"],
+      "item": "the item it concerns",
+      "headline": "one sentence, what is wrong, plain language",
+      "detail": "the specifics: numbers, models, what each side said",
+      "ask": "the question to send the supplier, ready to paste" }
+  ]
+}`;
+
+const SYSTEM_COVERAGE = `You are checking an estimator's material takeoff for GAPS, before any supplier pricing is considered. No quotes are involved here at all.
+
+You are given the takeoff (the estimator's own list of what the job needs) and what the project itself calls for, from up to three places: requirement findings pulled out of the bid documents, items from the project's fixture or equipment schedule, and points raised on the bid kickoff sheet. Your one question is: does the takeoff have a line covering each of those, or does it not.
+
+This matters because a supplier can only price what it is sent. An item the bid requires that never made it onto the takeoff will be missing from every quote, will look perfectly clean in a supplier comparison, and will surface as a change order after the job is won. It is the most expensive kind of miss and it is invisible to a price comparison.
+
+RULES:
+1. Judge coverage generously on wording and strictly on substance. A takeoff line reading "2 inch Type L copper" covers a spec requirement for "copper tubing, Type L, 2 inch" even though the words differ. It does not cover a requirement for insulation on that pipe.
+2. Verdicts, use exactly one: "covered" (a takeoff line clearly accounts for it), "partial" (something related is on the takeoff but it does not fully account for what is required, and say what is short), "not covered" (nothing on the takeoff accounts for it), "not a material item" (the requirement is real but it is not something a material takeoff could ever cover, for example a submittal deadline, a bonding requirement, or a warranty term).
+3. Use "not a material item" freely. Bid requirement findings include plenty of things that have nothing to do with material, and calling those a gap would bury the real gaps. They are not findings and they are not failures.
+4. Never invent a takeoff line that is not there, and never assume something is "obviously included". "The pipe line probably includes the fittings" is exactly the assumption that loses money. If fittings are required and there is no fittings line, that is "not covered", and you say so.
+5. Where the requirement carries a quantity and the takeoff line carries a different one, say so in the note. Do not convert units.
+6. "confidence" is your own: "low" where the requirement wording is vague enough that a person might read it either way.
+7. Raise a "gap" entry only for "not covered" and "partial". Give each a severity: "high" where the missing item would carry real cost or is explicitly required by the bid documents, "medium" where it needs checking, "low" for housekeeping. The "action" is what the estimator should do about it, in plain language, addressed to them and not to a supplier.
+8. No em dashes.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{
+  "checks": [
+    { "requirement": "what the project calls for, short",
+      "from": "bid documents | schedule | kickoff",
+      "source": "spec section, page or label it came from",
+      "verdict": "covered | partial | not covered | not a material item",
+      "confidence": "high | medium | low",
+      "takeoff_line": "the takeoff line that covers it, verbatim, or empty string",
+      "note": "one short clause: what lined up, or what is short, or why it is not a material item" }
+  ],
+  "gaps": [
+    { "severity": "high | medium | low",
+      "requirement": "what is required",
+      "source": "where it came from",
+      "headline": "one sentence: what the takeoff is missing",
+      "detail": "the specifics",
+      "action": "what the estimator should do, plain language" }
+  ]
+}`;
+
+const SYSTEM_ASK_P2 = `You are answering one question about a construction bid's material package, using ONLY the data provided to you: the estimator's takeoff (which is the reference for the whole job), extracted supplier quote lines, the fixture/equipment schedule, the bid requirements and kickoff points, and the comparison result, whichever of those are present.
+
+RULES:
+1. Answer only from the provided data. If it genuinely is not in there, say so plainly. Do not guess, do not fill gaps with what is typical.
+2. Answer the actual question first, in plain language, then supporting detail. Be direct and short.
+3. Name which supplier and which line anything came from, so it can be checked.
+4. If the honest answer depends on something unresolved (a package line, an unreadable quantity), say that rather than picking a side.
+5. No em dashes.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{ "found": true, "answer": "the direct answer in plain language", "source": "which part(s) of the provided data this came from" }`;
+
+/* ========================= SUPPLIER SLOTS (TAB 1) ========================= */
+function newSupplierSlot(name){
+  const s = { id: ++supplierSeq, name: name||'', mode:'file', files:[], pasted:'', data:null, running:false, abort:null };
+  suppliers.push(s);
+  return s;
+}
+function supplierById(id){ return suppliers.find(s=>s.id===id); }
+function addSupplierSlot(){ newSupplierSlot(''); renderSuppliers(); }
+function removeSupplierSlot(id){
+  const s = supplierById(id);
+  if(s && s.data && !confirm('Remove '+(s.name||'this supplier')+'? The quote already read for it will be dropped from this tab. It stays in the cloud if it was saved.')) return;
+  suppliers = suppliers.filter(x=>x.id!==id);
+  if(!suppliers.length) newSupplierSlot('');
+  renderSuppliers(); renderQuoteResults(); updateCounts();
+}
+function setSupMode(id, m){ const s=supplierById(id); if(!s) return; s.mode=m; renderSuppliers(); }
+function supFileHtml(s){
+  if(!s.files.length) return '';
+  return '<div class="filelist">'+s.files.map((f,i)=>
+    '<div class="filepill"><span class="nm">'+esc(f.name)+'</span><span class="sz">'+fileKind(f.name)+' &middot; '+(f.size/1024/1024).toFixed(2)+' MB</span>'+
+    '<span class="x" onclick="removeSupFile('+s.id+','+i+')" title="Remove">&times;</span></div>').join('')+'</div>';
+}
+function removeSupFile(id,i){ const s=supplierById(id); if(!s) return; s.files.splice(i,1); renderSuppliers(); }
+function renderSuppliers(){
+  const grid = document.getElementById('supgrid');
+  grid.innerHTML = suppliers.map((s,idx)=>{
+    const done = !!s.data;
+    const n = done ? (s.data.items||[]).length : 0;
+    return '<div class="supcard'+(done?' filled':'')+'">'+
+      '<div class="suphead">'+
+        '<span class="supno">'+String.fromCharCode(65+idx)+'</span>'+
+        '<span class="supstate">'+(done ? (n+' lines read') : (s.running?'reading…':'not read'))+'</span>'+
+        (suppliers.length>1 ? '<span class="x" style="cursor:pointer;color:var(--muted);font-weight:600;padding:0 4px" onclick="removeSupplierSlot('+s.id+')" title="Remove this slot">&times;</span>' : '')+
+      '</div>'+
+      '<label class="fld">Supplier name</label>'+
+      '<input type="text" id="supname-'+s.id+'" value="'+esc(s.name)+'" placeholder="e.g. Ferguson, Winsupply, Core &amp; Main" oninput="supplierById('+s.id+').name=this.value" style="margin-bottom:12px">'+
+      '<div class="toggle">'+
+        '<button class="'+(s.mode==='file'?'on':'')+'" onclick="setSupMode('+s.id+',\'file\')" type="button" title="Excel, PDF, Word, or a photo of a faxed quote. Scans are detected and read from the images automatically.">Upload a file</button>'+
+        '<button class="'+(s.mode==='paste'?'on':'')+'" onclick="setSupMode('+s.id+',\'paste\')" type="button" title="Paste the body of an email quote.">Paste</button>'+
+      '</div>'+
+      (s.mode==='paste'
+        ? '<textarea id="suppaste-'+s.id+'" placeholder="Paste the quote text or the body of the email here." oninput="supplierById('+s.id+').pasted=this.value">'+esc(s.pasted)+'</textarea>'
+        : '<div class="drop" id="supdrop-'+s.id+'"><div class="big">Drop '+(s.name?esc(s.name)+"'s":'the')+' quote here</div><div class="small">or click to choose &middot; Excel, PDF, Word, image</div></div>'+
+          '<input type="file" id="supfile-'+s.id+'" accept=".xlsx,.xlsm,.xls,.csv,.tsv,.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.webp" multiple style="display:none">'+
+          supFileHtml(s))+
+      '<div class="runbar" style="margin-top:12px">'+
+        '<button class="btn2 primary" onclick="runSupplier('+s.id+')" type="button"'+(s.running?' disabled':'')+'>'+(done?'Re-read':'Read this quote')+'</button>'+
+        '<button class="stopbtn'+(s.running?' show':'')+'" onclick="stopSupplier('+s.id+')" type="button">Stop</button>'+
+      '</div>'+
+      '<div class="progline" id="suphint-'+s.id+'"></div>'+
+      '<div id="superr-'+s.id+'"></div>'+
+    '</div>';
+  }).join('');
+  suppliers.forEach(s=>{
+    if(s.mode==='paste') return;
+    const drop = document.getElementById('supdrop-'+s.id);
+    const input = document.getElementById('supfile-'+s.id);
+    if(!drop || !input) return;
+    drop.onclick = ()=>input.click();
+    drop.ondragover = e=>{ e.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = ()=>drop.classList.remove('over');
+    drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over'); addSupFiles(s.id, e.dataTransfer.files); };
+    input.onchange = ()=>{ addSupFiles(s.id, input.files); input.value=''; };
+  });
+  updateCounts();
+}
+async function addSupFiles(id, list){
+  const s = supplierById(id); if(!s) return;
+  const rejected = [];
+  for(const f of Array.from(list||[])){
+    if(!acceptsFile(f.name)){ rejected.push(f.name); continue; }
+    s.files.push({ name:f.name, size:f.size, buf: await f.arrayBuffer() });
+    if(!s.name){
+      // A quote file is very often named after the vendor. A guess the user can overtype
+      // beats an empty box they have to fill in three times before a bid.
+      const guess = f.name.replace(/\.pdf$/i,'').replace(/[_-]+/g,' ').replace(/\b(quote|quotation|proposal|bid|pricing|rev\s*\d+)\b/ig,'').replace(/\s+/g,' ').trim();
+      if(guess.length>1 && guess.length<40) s.name = guess;
+    }
+  }
+  renderSuppliers();
+  if(rejected.length) alert('Could not take '+rejected.join(', ')+'. Excel, PDF, Word, plain text and images all work.');
+}
+function updateCounts(){
+  const read = suppliers.filter(s=>s.data).length;
+  document.getElementById('tc-quotes').textContent = read;
+  document.getElementById('tc-to').textContent = takeoffData ? (takeoffData.items||[]).length : 0;
+  const reqN = (bidReq ? ((bidReq.findings||[]).length + (bidReq.kickoff_points||[]).length) : 0) + (specBasis ? (specBasis.items||[]).length : 0);
+  document.getElementById('tc-req').textContent = reqN;
+  document.getElementById('tc-exc').textContent = cmpData ? (cmpData.exceptions||[]).length : 0;
+  const rs = document.getElementById('reqSummary');
+  if(rs) rs.textContent = bidReq ? ((bidReq.findings||[]).length+' bid requirements, '+(bidReq.kickoff_points||[]).length+' kickoff points') : 'nothing pulled yet';
+  const ss = document.getElementById('specSummary');
+  if(ss) ss.textContent = specBasis ? ((specBasis.items||[]).length+' scheduled items loaded') : 'nothing loaded';
+}
+function stopSupplier(id){ const s=supplierById(id); if(s && s.abort) s.abort.abort(); }
+
+// Reads one supplier's quote, on its own, start to finish. Deliberately per supplier:
+// a quote that fails or lands late never costs you the ones already done.
+async function runSupplier(id){
+  const s = supplierById(id); if(!s) return;
+  const key = getKey();
+  const errEl = document.getElementById('superr-'+s.id);
+  errEl.innerHTML = '';
+  if(!key){ errEl.innerHTML = '<div class="note err" style="margin:10px 0 0"><b>No API key.</b> Open Setup at the top and paste your Anthropic key.</div>'; return; }
+  if(s.mode==='paste' && !s.pasted.trim()){ errEl.innerHTML = '<div class="note err" style="margin:10px 0 0"><b>Nothing to read.</b> Paste the quote text first.</div>'; return; }
+  if(s.mode!=='paste' && !s.files.length){ errEl.innerHTML = '<div class="note err" style="margin:10px 0 0"><b>Nothing to read.</b> Drop the quote in first. Excel, PDF, Word and photos all work.</div>'; return; }
+  if(!s.name.trim()) s.name = 'Supplier '+String.fromCharCode(65+suppliers.indexOf(s));
+  // Two suppliers sharing a name would collide as one column in the matrix and overwrite
+  // each other in the cloud. Nudge the duplicate rather than losing a quote silently.
+  if(suppliers.some(o=>o!==s && o.name.trim().toLowerCase()===s.name.trim().toLowerCase())){
+    let n=2; const base=s.name.trim();
+    while(suppliers.some(o=>o!==s && o.name.trim().toLowerCase()===(base+' '+n).toLowerCase())) n++;
+    s.name = base+' '+n;
+    errEl.innerHTML = '<div class="note warn" style="margin:10px 0 0">Another slot already uses that supplier name, so this one was renamed <b>'+esc(s.name)+'</b>. Two suppliers with the same name would collide into one column. Rename it to whatever you want and read again.</div>';
+  }
+
+  s.running = true; s.abort = new AbortController();
+  renderSuppliers();
+  const hintId = 'suphint-'+s.id;
+  const perBatch = Math.max(1, parseInt(document.getElementById('quotePagesPerBatch').value,10) || 6);
+
+  try{
+    const merged = { supplier: s.name, quote_meta:{ quote_number:'',quote_date:'',valid_until:'',contact:'',freight:'',tax:'',lead_time:'',terms:'',exclusions:[],notes:[] },
+                     totals_stated:{subtotal:0,tax:0,freight:0,total:0}, items:[], _read:{ mode:s.mode, batches:0, at:new Date().toISOString() } };
+    const header = 'A SUPPLIER QUOTE for a mechanical/plumbing bid. The supplier name the estimator gave for this quote is "'+s.name+'"; prefer the name printed on the quote itself if there is one. Transcribe every line item.';
+    let jobs = [];
+    if(s.mode==='paste'){
+      jobs = [{ label:'pasted text', content:[{type:'text', text: header+'\n\nSOURCE: text pasted in by the estimator, usually the body of an email.\n\n'+s.pasted}] }];
+    } else {
+      const r = await buildJobsFromFiles(s.files, header, { pagesPerBatch: perBatch, rowsPerBatch: 120 });
+      jobs = r.jobs;
+      if(r.warn.length) errEl.innerHTML = '<div class="note warn" style="margin:10px 0 0">'+r.warn.map(esc).join('<br>')+'</div>';
+      if(!jobs.length) throw new Error('Nothing readable was found in that file.');
+    }
+    for(let i=0;i<jobs.length;i++){
+      setHint(hintId, 'Reading '+jobs[i].label+' ('+(i+1)+' of '+jobs.length+')…');
+      const out = await fetchAndParseJSON(key, jobs[i].content, SYSTEM_QUOTE, s.abort.signal, hintId, s.name+' — '+jobs[i].label);
+      mergeQuoteResult(merged, out);
+      merged._read.batches++;
+    }
+    merged.supplier = s.name; // the estimator's label wins for column headings; the printed one is kept in quote_meta
+    s.data = merged;
+    setHint(hintId, (merged.items||[]).length+' line'+((merged.items||[]).length===1?'':'s')+' read.');
+    saveToCloud('p2_quote:'+slugify(s.name), merged);
+  }catch(e){
+    if(e.name === 'AbortError'){ setHint(hintId, 'Stopped.'); }
+    else{
+      console.error(e);
+      errEl.innerHTML = '<div class="note err" style="margin:10px 0 0"><b>Could not read this quote.</b> '+esc(e.message)+'</div>';
+      setHint(hintId, '');
+    }
+  }finally{
+    s.running = false; s.abort = null;
+    renderSuppliers(); renderQuoteResults(); updateCounts();
+  }
+}
+function mergeQuoteResult(merged, out){
+  if(!out) return;
+  if(out.supplier && !merged.quote_meta.printed_name) merged.quote_meta.printed_name = out.supplier;
+  const m = out.quote_meta || {};
+  ['quote_number','quote_date','valid_until','contact','freight','tax','lead_time','terms'].forEach(k=>{
+    if(!merged.quote_meta[k] && m[k]) merged.quote_meta[k] = m[k];
+  });
+  (m.exclusions||[]).forEach(x=>{ if(x && merged.quote_meta.exclusions.indexOf(x)<0) merged.quote_meta.exclusions.push(x); });
+  (m.notes||[]).forEach(x=>{ if(x && merged.quote_meta.notes.indexOf(x)<0) merged.quote_meta.notes.push(x); });
+  const t = out.totals_stated || {};
+  ['subtotal','tax','freight','total'].forEach(k=>{ if(!merged.totals_stated[k] && num(t[k])) merged.totals_stated[k] = num(t[k]); });
+  (out.items||[]).forEach(it=>{
+    merged.items.push({
+      line_ref: it.line_ref||'', description: it.description||'', category: CATEGORIES.indexOf(it.category)>=0 ? it.category : 'Other',
+      qty: num(it.qty), uom: it.uom||'', qty_unclear: !!it.qty_unclear,
+      manufacturer: it.manufacturer||'', model: it.model||'',
+      unit_price: num(it.unit_price), extended_price: num(it.extended_price),
+      is_package: !!it.is_package, package_contents: it.package_contents||'',
+      substitution_language: it.substitution_language||'', notes: it.notes||'', page: num(it.page)
+    });
+  });
+}
+// A supplier's own arithmetic is evidence, not gospel. Where the quote prints a total we show
+// theirs; where it doesn't we add the lines up ourselves and say so, rather than quietly
+// presenting a number the supplier never wrote down.
+function supplierTotal(d){
+  const stated = num(d.totals_stated && d.totals_stated.total);
+  if(stated) return { value: stated, derived:false };
+  let sum = 0;
+  (d.items||[]).forEach(it=>{ sum += it.extended_price ? num(it.extended_price) : (num(it.qty)*num(it.unit_price)); });
+  return { value: sum, derived:true };
+}
+function renderQuoteResults(){
+  const box = document.getElementById('quoteResults');
+  const read = suppliers.filter(s=>s.data);
+  if(!read.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.style.display='block';
+  box.innerHTML = read.map(s=>{
+    const d = s.data, tot = supplierTotal(d), m = d.quote_meta||{};
+    const byCat = {};
+    (d.items||[]).forEach(it=>{ byCat[it.category] = (byCat[it.category]||0)+1; });
+    const flags = [];
+    const pk = (d.items||[]).filter(it=>it.is_package).length;
+    const qu = (d.items||[]).filter(it=>it.qty_unclear).length;
+    const sb = (d.items||[]).filter(it=>it.substitution_language).length;
+    if(pk) flags.push(pk+' package/lot line'+(pk===1?'':'s'));
+    if(qu) flags.push(qu+(qu===1?' unclear quantity':' unclear quantities'));
+    if(sb) flags.push(sb+' line'+(sb===1?'':'s')+' with substitution wording');
+    return '<div class="card">'+
+      '<div class="collapsible-head open" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i><h2>'+esc(s.name)+'</h2>'+
+        '<span class="collapsible-summary">'+(d.items||[]).length+' lines &middot; '+(tot.value?money(tot.value):'no total printed')+(tot.derived&&tot.value?' (added up from the lines)':'')+'</span></div>'+
+      '<div class="collapsible-body" style="display:block">'+
+        '<div class="qsum">'+
+          Object.keys(byCat).map(c=>'<div class="qsumchip"><b>'+byCat[c]+'</b>'+esc(c)+'</div>').join('')+
+        '</div>'+
+        (flags.length ? '<div class="note warn" style="margin:14px 0 0"><b>Worth a look on this quote:</b> '+esc(flags.join(', '))+'. These are the lines the comparison will not be able to take at face value.</div>' : '')+
+        (m.exclusions&&m.exclusions.length ? '<div class="note err" style="margin:14px 0 0"><b>Excluded by this quote:</b><ul style="margin:6px 0 0;padding-left:20px">'+m.exclusions.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>' : '')+
+        '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--muted)">'+
+          [['Quote #',m.quote_number],['Dated',m.quote_date],['Valid until',m.valid_until],['Lead time',m.lead_time],['Freight',m.freight],['Tax',m.tax]]
+            .filter(p=>p[1]).map(p=>'<span><b style="color:var(--ink)">'+p[0]+':</b> '+esc(p[1])+'</span>').join('')+
+        '</div>'+
+        '<div style="margin-top:14px"><button class="btnsm" onclick="toggleLines(this,\''+s.id+'\')" type="button">Show the '+(d.items||[]).length+' extracted line'+((d.items||[]).length===1?'':'s')+'</button></div>'+
+        '<div id="suplines-'+s.id+'" style="display:none;margin-top:12px">'+quoteLinesTable(d)+'</div>'+
+      '</div></div>';
+  }).join('');
+}
+function toggleLines(btn, id){
+  const el = document.getElementById('suplines-'+id);
+  const open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  btn.textContent = open ? btn.textContent.replace('Hide','Show') : btn.textContent.replace('Show','Hide');
+}
+function quoteLinesTable(d){
+  return '<div class="tablewrap"><table class="matrix"><thead><tr>'+
+    '<th style="width:60px">Line</th><th>Description</th><th style="width:110px">Qty</th><th style="width:150px">Mfr / Model</th><th style="width:100px">Unit</th><th style="width:110px">Extended</th></tr></thead><tbody>'+
+    (d.items||[]).map(it=>'<tr'+(it.is_package||it.qty_unclear?' class="hasissue"':'')+'>'+
+      '<td class="pricebox">'+esc(it.line_ref)+'</td>'+
+      '<td><div class="itemdesc">'+esc(it.description)+'</div>'+
+        '<div class="itemsub">'+esc(it.category)+(it.is_package?' &middot; PACKAGE':'')+(it.substitution_language?' &middot; "'+esc(it.substitution_language)+'"':'')+'</div></td>'+
+      '<td class="qtybox">'+(it.qty?esc(it.qty):'')+' '+esc(it.uom)+(it.qty_unclear?' <span class="mm unclear">?</span>':'')+'</td>'+
+      '<td class="pricebox">'+esc([it.manufacturer,it.model].filter(Boolean).join(' '))+'</td>'+
+      '<td class="pricebox">'+money(it.unit_price)+'</td>'+
+      '<td class="pricebox">'+money(it.extended_price)+'</td></tr>').join('')+
+    '</tbody></table></div>';
+}
+
+/* ================= TAKEOFF (TAB 1) + BID REQUIREMENTS (TAB 3) ============= */
+function setToMode(m){
+  toMode = m;
+  document.getElementById('tomode-file').style.display = m==='file' ? 'block':'none';
+  document.getElementById('tomode-text').style.display = m==='text' ? 'block':'none';
+  document.getElementById('ttab-file').classList.toggle('on', m==='file');
+  document.getElementById('ttab-text').classList.toggle('on', m==='text');
+}
+function setSpecMode(m){
+  specMode = m;
+  document.getElementById('specmode-file').style.display = m==='file' ? 'block':'none';
+  document.getElementById('specmode-text').style.display = m==='text' ? 'block':'none';
+  document.getElementById('stab-file').classList.toggle('on', m==='file');
+  document.getElementById('stab-text').classList.toggle('on', m==='text');
+}
+function wireDrop(dropId, inputId, arr, listId){
+  const drop = document.getElementById(dropId), input = document.getElementById(inputId);
+  if(!drop||!input) return;
+  const render = ()=>{
+    document.getElementById(listId).innerHTML = arr.map((f,i)=>
+      '<div class="filepill"><span class="nm">'+esc(f.name)+'</span><span class="sz">'+fileKind(f.name)+' &middot; '+(f.size/1024/1024).toFixed(2)+' MB</span>'+
+      '<span class="x" data-i="'+i+'" title="Remove">&times;</span></div>').join('');
+    document.getElementById(listId).querySelectorAll('.x').forEach(x=>{
+      x.onclick = ()=>{ arr.splice(parseInt(x.dataset.i,10),1); render(); };
+    });
+  };
+  const take = async list=>{
+    const rejected = [];
+    for(const f of Array.from(list||[])){
+      if(!acceptsFile(f.name)){ rejected.push(f.name); continue; }
+      arr.push({ name:f.name, size:f.size, buf: await f.arrayBuffer() });
+    }
+    render();
+    if(rejected.length) alert('Could not take '+rejected.join(', ')+'. Excel, PDF, Word, plain text and images all work.');
+  };
+  drop.onclick = ()=>input.click();
+  drop.ondragover = e=>{ e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = ()=>drop.classList.remove('over');
+  drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files); };
+  input.onchange = ()=>{ take(input.files); input.value=''; };
+}
+wireDrop('specDrop','specFile',specFiles,'specFilelist');
+wireDrop('toDrop','toFile',toFiles,'toFilelist');
+
+function stopSpec(){ if(specAbort) specAbort.abort(); }
+function stopTakeoff(){ if(toAbort) toAbort.abort(); }
+// Cheap deterministic fingerprint. Not cryptographic, does not need to be: it only has to tell
+// "this is the same takeoff I already read" apart from "this one has changed".
+function fnv1a(str){
+  let h = 0x811c9dc5;
+  for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h>>>0).toString(16);
+}
+function itemKey(it){ return String(it.description||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+function takeoffHash(items){ return fnv1a(items.map(i=>itemKey(i)+'|'+num(i.qty)+'|'+String(i.uom||'').toLowerCase()).sort().join(';')); }
+// What actually changed between two takeoffs. Quantities move mid-bid far more often than
+// lines appear or disappear, so a quantity change is reported as its own thing rather than as
+// a remove plus an add.
+function diffTakeoff(prevItems, nextItems){
+  const p = new Map(), n = new Map();
+  (prevItems||[]).forEach(it=>p.set(itemKey(it), it));
+  (nextItems||[]).forEach(it=>n.set(itemKey(it), it));
+  const added = [], removed = [], changed = [];
+  n.forEach((it,k)=>{ if(!p.has(k)) added.push(it); });
+  p.forEach((it,k)=>{ if(!n.has(k)) removed.push(it); });
+  n.forEach((it,k)=>{
+    const was = p.get(k); if(!was) return;
+    if(num(was.qty)!==num(it.qty) || String(was.uom||'')!==String(it.uom||''))
+      changed.push({ description: it.description, from: num(was.qty)+' '+(was.uom||''), to: num(it.qty)+' '+(it.uom||'') });
+  });
+  return { added, removed, changed, any: added.length+removed.length+changed.length };
+}
+// Shared reader for the takeoff and the fixture schedule. Same ingest, same batching, same
+// merge; only the prompt and where the result lands differ.
+async function readDocInto(opts){
+  const key = getKey();
+  const out = document.getElementById(opts.outId);
+  out.innerHTML = '';
+  if(!key){ out.innerHTML = '<div class="note err" style="margin-top:12px"><b>No API key.</b> Open Setup at the top and paste your Anthropic key.</div>'; return null; }
+  const pasted = opts.mode==='text' ? (document.getElementById(opts.textId).value||'').trim() : '';
+  if(opts.mode==='text' && !pasted){ out.innerHTML = '<div class="note err" style="margin-top:12px"><b>Nothing to read.</b> Paste it in first.</div>'; return null; }
+  if(opts.mode!=='text' && !opts.files.length){ out.innerHTML = '<div class="note err" style="margin-top:12px"><b>Nothing to read.</b> Drop the file in first. Excel, PDF, Word, plain text and photos all work.</div>'; return null; }
+  const ctrl = new AbortController();
+  opts.setAbort(ctrl);
+  document.getElementById(opts.stopId).classList.add('show');
+  document.getElementById(opts.btnId).disabled = true;
+  if(opts.spinId) document.getElementById(opts.spinId).style.display = 'inline-block';
+  const merged = { items:[], notes:[] };
+  try{
+    let jobs = [], warn = [];
+    if(opts.mode==='text'){
+      jobs = [{ label:'pasted text', content:[{type:'text', text: opts.header+'\n\nSOURCE: text pasted in by the estimator. It may have come straight out of a spreadsheet, so columns may be separated by tabs.\n\n'+pasted}] }];
+    } else {
+      const r = await buildJobsFromFiles(opts.files, opts.header, { pagesPerBatch:5, rowsPerBatch:120 });
+      jobs = r.jobs; warn = r.warn;
+    }
+    if(warn.length) out.innerHTML = '<div class="note warn" style="margin-top:12px">'+warn.map(esc).join('<br>')+'</div>';
+    if(!jobs.length){ out.innerHTML += '<div class="note err"><b>Nothing readable was found in that.</b> If it is a spreadsheet, check the sheet actually has rows in it.</div>'; return null; }
+    for(let i=0;i<jobs.length;i++){
+      setHint(opts.hintId, 'Reading '+jobs[i].label+' ('+(i+1)+' of '+jobs.length+')…');
+      const r = await fetchAndParseJSON(key, jobs[i].content, opts.system, ctrl.signal, opts.hintId, opts.label+' — '+jobs[i].label);
+      (r.items||[]).forEach(it=>merged.items.push(it));
+      (r.notes||[]).forEach(n=>{ if(merged.notes.indexOf(n)<0) merged.notes.push(n); });
+    }
+    setHint(opts.hintId, merged.items.length+' item'+(merged.items.length===1?'':'s')+' read.');
+    merged._sources = opts.mode==='text' ? ['pasted text'] : opts.files.map(f=>f.name);
+    return merged;
+  }catch(e){
+    if(e.name === 'AbortError') setHint(opts.hintId, 'Stopped.');
+    else{
+      console.error(e);
+      out.innerHTML += '<div class="note err" style="margin-top:12px"><b>Could not read it.</b> '+esc(e.message)+'</div>';
+      setHint(opts.hintId, '');
+    }
+    return null;
+  }finally{
+    opts.setAbort(null);
+    document.getElementById(opts.stopId).classList.remove('show');
+    document.getElementById(opts.btnId).disabled = false;
+    if(opts.spinId) document.getElementById(opts.spinId).style.display = 'none';
+  }
+}
+async function runTakeoffRead(){
+  const r = await readDocInto({ mode:toMode, files:toFiles, textId:'toText', outId:'toOut', hintId:'toHint',
+    btnId:'toRunBtn', stopId:'toStopBtn', spinId:'toSpin', system:SYSTEM_TAKEOFF,
+    header:"THE ESTIMATOR'S OWN MATERIAL TAKEOFF. This is the reference document for the whole job: it is the list of what the project actually needs, and it is what goes out to suppliers for pricing.",
+    label:'the takeoff', setAbort:c=>{toAbort=c;} });
+  if(!r) return;
+  const items = r.items.map(it=>({
+    description: it.description||'', category: CATEGORIES.indexOf(it.category)>=0?it.category:'Other',
+    qty: num(it.qty), uom: it.uom||'', manufacturer: it.manufacturer||'', model: it.model||'', notes: it.notes||''
+  })).filter(it=>it.description);
+  const hash = takeoffHash(items);
+  const prev = takeoffData;
+  if(prev && prev.hash === hash){
+    document.getElementById('toOut').innerHTML = '<div class="note info" style="margin-top:12px"><b>Same takeoff as the one already loaded.</b> Nothing changed, so version '+prev.version+' is still current and no comparison has gone stale.</div>';
+    renderToOut(); return;
+  }
+  const diff = prev ? diffTakeoff(prev.items, items) : null;
+  const history = (prev && prev.history ? prev.history.slice() : []);
+  if(prev) history.unshift({ version: prev.version, at: prev.at, count: prev.items.length, hash: prev.hash, sources: prev.sources, items: prev.items });
+  takeoffData = {
+    version: prev ? prev.version+1 : 1,
+    at: new Date().toISOString(),
+    sources: r._sources || [],
+    items, hash, history,
+    last_diff: diff
+  };
+  renderToOut();
+  renderCompare(); renderExceptions();
+  saveToCloud('p2_takeoff', takeoffData);
+  updateCounts();
+}
+async function runSpecRead(){
+  const r = await readDocInto({ mode:specMode, files:specFiles, textId:'specText', outId:'specOut', hintId:'specHint',
+    btnId:'specRunBtn', stopId:'specStopBtn', system:SYSTEM_SPEC_BASIS,
+    header:'A PROJECT SPECIFICATION SECTION OR FIXTURE / EQUIPMENT SCHEDULE. This is what the bid documents require, not what anyone asked for.',
+    label:'the schedule', setAbort:c=>{specAbort=c;} });
+  if(!r) return;
+  specBasis = { source:'read', items:r.items, notes:r.notes, at:new Date().toISOString() };
+  renderSpecOut();
+  saveToCloud('p2_spec_basis', specBasis);
+  updateCounts();
+}
+function takeoffStaleBanner(){
+  if(!cmpData || !takeoffData) return '';
+  const used = cmpData._run && cmpData._run.takeoff_version;
+  if(!used || used === takeoffData.version) return '';
+  const d = takeoffData.last_diff || {added:[],removed:[],changed:[]};
+  const names = new Set([].concat(d.added||[], d.removed||[]).map(i=>itemKey(i)).concat((d.changed||[]).map(c=>itemKey(c))));
+  const stale = (cmpData.exceptions||[]).filter(x=>names.has(String(x.item||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()));
+  return '<div class="note err"><b>This comparison was run against takeoff v'+used+'. You are now on v'+takeoffData.version+'.</b> '+
+    ((d.added||[]).length+' line'+((d.added||[]).length===1?'':'s')+' added, '+(d.removed||[]).length+' removed, '+(d.changed||[]).length+' quantity change'+((d.changed||[]).length===1?'':'s')+'. ')+
+    (stale.length ? ('<b>'+stale.length+' exception'+(stale.length===1?' touches':'s touch')+' a line that moved, so treat '+(stale.length===1?'it':'them')+' as stale even if you already ticked '+(stale.length===1?'it':'them')+' off.</b> ') : 'None of the open exceptions touch a line that moved, so what you have already cleared still stands. ')+
+    'Everything below is still the v'+used+' result until you run the comparison again.</div>';
+}
+function renderToOut(){
+  const out = document.getElementById('toOut');
+  const box = document.getElementById('toVersions');
+  if(!takeoffData){ out.innerHTML=''; box.innerHTML=''; return; }
+  const items = takeoffData.items||[];
+  const byCat = {};
+  items.forEach(it=>{ byCat[it.category]=(byCat[it.category]||0)+1; });
+  const noQty = items.filter(it=>!num(it.qty)).length;
+  const d = takeoffData.last_diff;
+  out.innerHTML =
+    '<div class="note ok"><b>Takeoff v'+takeoffData.version+' loaded: '+items.length+' material line'+(items.length===1?'':'s')+'.</b> '+
+      'Read from '+esc((takeoffData.sources||[]).join(', ')||'pasted text')+'. Quantities and units are held exactly as written. Nothing is converted.'+
+      (noQty ? ' '+(noQty===1 ? '1 line has no quantity on it, which is worth a look before you send this out.' : noQty+' lines have no quantity on them, which is worth a look before you send this out.') : '')+'</div>'+
+    (d && d.any ? '<div class="note warn"><b>Changed from v'+(takeoffData.version-1)+':</b> '+
+        d.added.length+' added, '+d.removed.length+' removed, '+d.changed.length+' quantity change'+(d.changed.length===1?'':'s')+'.'+
+        (d.changed.length ? '<ul style="margin:6px 0 0;padding-left:20px">'+d.changed.slice(0,12).map(c=>'<li>'+esc(c.description)+': '+esc(c.from)+' &rarr; '+esc(c.to)+'</li>').join('')+
+          (d.changed.length>12?'<li>and '+(d.changed.length-12)+' more</li>':'')+'</ul>' : '')+
+        (d.added.length ? '<div style="margin-top:6px"><b>Added:</b> '+esc(d.added.slice(0,8).map(i=>i.description).join('; '))+(d.added.length>8?' and '+(d.added.length-8)+' more':'')+'</div>' : '')+
+        (d.removed.length ? '<div style="margin-top:6px"><b>Removed:</b> '+esc(d.removed.slice(0,8).map(i=>i.description).join('; '))+(d.removed.length>8?' and '+(d.removed.length-8)+' more':'')+'</div>' : '')+
+      '</div>' : '')+
+    '<div class="qsum">'+Object.keys(byCat).map(c=>'<div class="qsumchip"><b>'+byCat[c]+'</b>'+esc(c)+'</div>').join('')+'</div>'+
+    '<div style="margin-top:14px"><button class="btnsm" onclick="toggleLines(this,\'to\')" type="button">Show the '+items.length+' line'+(items.length===1?'':'s')+'</button>'+
+    ' <button class="btnsm" onclick="downloadTakeoffExcel(this)" type="button">Download as the supplier RFQ sheet</button></div>'+
+    '<div id="suplines-to" style="display:none;margin-top:12px"><div class="tablewrap"><table class="matrix"><thead><tr>'+
+      '<th>Item</th><th style="width:110px">Qty</th><th style="width:160px">Mfr / Model</th><th style="width:150px">Category</th></tr></thead><tbody>'+
+      items.map(i=>'<tr'+(!num(i.qty)?' class="hasissue"':'')+'><td class="itemdesc">'+esc(i.description)+
+        (i.notes?'<div class="itemsub">'+esc(i.notes)+'</div>':'')+'</td>'+
+        '<td class="qtybox">'+(num(i.qty)?esc(i.qty):'<span class="mm unclear">no qty</span>')+' '+esc(i.uom)+'</td>'+
+        '<td class="pricebox">'+esc([i.manufacturer,i.model].filter(Boolean).join(' '))+'</td>'+
+        '<td><span class="catchip">'+esc(i.category)+'</span></td></tr>').join('')+
+    '</tbody></table></div></div>';
+  const hist = takeoffData.history||[];
+  box.innerHTML = hist.length ? '<div class="card"><h2>Earlier versions</h2>'+
+    '<p class="hint" style="margin:0 0 10px">Kept so a comparison can always say which takeoff it was run against. Nothing here is deleted when you upload a revision.</p>'+
+    '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:90px">Version</th><th style="width:190px">Read at</th><th style="width:90px">Lines</th><th>From</th></tr></thead><tbody>'+
+    ('<tr><td class="qtybox">v'+takeoffData.version+' (current)</td><td class="pricebox">'+esc(new Date(takeoffData.at).toLocaleString())+'</td><td class="qtybox">'+items.length+'</td><td class="pricebox">'+esc((takeoffData.sources||[]).join(', '))+'</td></tr>')+
+    hist.map(h=>'<tr><td class="qtybox">v'+h.version+'</td><td class="pricebox">'+esc(new Date(h.at).toLocaleString())+'</td><td class="qtybox">'+h.count+'</td><td class="pricebox">'+esc((h.sources||[]).join(', '))+'</td></tr>').join('')+
+    '</tbody></table></div></div>' : '';
+}
+// The takeoff, back out as a clean sheet with a price column, ready to send. This is the thing
+// that actually goes to the suppliers, so it carries no internal notes and no pricing of yours.
+function downloadTakeoffExcel(btn){
+  if(!takeoffData) return;
+  if(typeof XLSX==='undefined'){ alert('The Excel library did not load. Check the connection and reload the page.'); return; }
+  const rows = [[ (projectName()||'Project')+' — material request for quotation' ],
+    ['Takeoff version '+takeoffData.version+', '+new Date(takeoffData.at).toLocaleDateString()],
+    ['Please price every line. If you substitute, say so on the line and give the manufacturer and model you are offering.'],
+    [],
+    ['#','Description','Category','Qty','UOM','Manufacturer','Model','Unit price','Extended','Substitution offered?','Lead time','Supplier notes']];
+  (takeoffData.items||[]).forEach((it,i)=>rows.push([i+1, it.description, it.category, it.qty||'', it.uom||'', it.manufacturer||'', it.model||'','','','','','']));
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[{wch:5},{wch:52},{wch:18},{wch:9},{wch:8},{wch:18},{wch:18},{wch:12},{wch:13},{wch:20},{wch:14},{wch:34}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'RFQ');
+  XLSX.writeFile(wb, (projectName()?slugify(projectName())+'-':'')+'rfq-takeoff-v'+takeoffData.version+'.xlsx');
+  flash(btn);
+}
+
+/* --------------------------- bid requirements --------------------------- */
+const MATERIAL_RX = /(fixture|water closet|\bwc\b|lavatory|urinal|sink|faucet|carrier|floor drain|roof drain|cleanout|trap|interceptor|shower|tub|water heater|heater|pump|boiler|backflow|hydrant|valve|copper|pvc|cpvc|pex|cast iron|\bpipe\b|fitting|insulat|hanger|support|sleeve|escutcheon|hose bibb|mixing valve|expansion|specialt|equipment|manufactur|model|approved equal|or equal|basis of design|substitut|product|schedule|furnish|provide|material)/i;
+async function pullFromPhase1(btn){
+  const msg = document.getElementById('pullMsg');
+  msg.style.color = '';
+  const o = btn.textContent; btn.disabled = true; btn.textContent = 'Pulling…';
+  try{
+    const { latestByPhase } = await fetchProjectRows();
+    const spec = reconstructFromItemRows(latestByPhase, 'spec_extraction');
+    const dwg  = reconstructFromItemRows(latestByPhase, 'drawing_extraction');
+    const kickoff = latestByPhase.kickoff_sheet ? JSON.parse(latestByPhase.kickoff_sheet.data) : null;
+    const pool = [].concat((spec&&spec.items)||[], (dwg&&dwg.items)||[]);
+    if(!pool.length && !kickoff) throw new Error('Nothing saved under "'+projectName()+'" from the Bid Requirements Reader. Check the project name matches exactly what was typed over there.');
+    const findings = pool
+      .filter(it=>MATERIAL_RX.test([it.requirement,it.detail,it.topic,it.item].filter(Boolean).join(' ')))
+      .map(it=>({ requirement: it.requirement || it.item || '', detail: it.detail || '', topic: it.topic || '',
+                  source: it.source || it.reference || '', bucket: it.category || it.bucket || '' }));
+    // From the kickoff sheet, only the parts that can plausibly imply material or scope. A
+    // submission deadline is not something a takeoff can cover; a hidden-scope flag is.
+    const kickoffPoints = [];
+    if(kickoff){
+      (kickoff.top_risks||[]).forEach(r=>{ if(MATERIAL_RX.test([r.topic,r.description].join(' '))) kickoffPoints.push({ kind:'risk', label:r.topic||'', detail:r.description||'', source:r.source||'Kickoff Sheet' }); });
+      (kickoff.conflicts||[]).forEach(c=>{ if(MATERIAL_RX.test(c.description||'')) kickoffPoints.push({ kind:'conflict', label:'Document conflict', detail:c.description||'', source:c.sources||'Kickoff Sheet' }); });
+      (kickoff.open_items||[]).forEach(oi=>{ if(MATERIAL_RX.test([oi.description,oi.why].join(' '))) kickoffPoints.push({ kind:'open item', label:'Open item', detail:oi.description||'', source:oi.why||'Kickoff Sheet' }); });
+    }
+    bidReq = { findings, kickoff_points: kickoffPoints,
+      kickoff_meta: kickoff ? { verdict:(kickoff.recommendation||{}).verdict||'', bid_due:kickoff.bid_due||'', scores:kickoff.scores||null } : null,
+      at:new Date().toISOString(), _pool: pool.length, _kickoff_total: kickoff ? ((kickoff.top_risks||[]).length+(kickoff.conflicts||[]).length+(kickoff.open_items||[]).length) : 0 };
+    renderReqOut();
+    saveToCloud('p2_bid_requirements', bidReq);
+    msg.textContent = 'Pulled '+findings.length+' material-related findings out of '+pool.length+
+      (kickoff ? (', plus '+kickoffPoints.length+' point'+(kickoffPoints.length===1?'':'s')+' off the kickoff sheet.') : '. No kickoff sheet saved for this project yet.');
+    updateCounts();
+  }catch(e){
+    msg.textContent = e.message; msg.style.color = '#B4451F';
+  }finally{
+    btn.disabled = false; btn.textContent = o;
+  }
+}
+function renderReqOut(){
+  const out = document.getElementById('reqOut');
+  if(!bidReq){ out.innerHTML=''; return; }
+  const f = bidReq.findings||[], k = bidReq.kickoff_points||[];
+  out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+f.length+' material-related bid requirement'+(f.length===1?'':'s')+'</b> and <b>'+k.length+' kickoff point'+(k.length===1?'':'s')+'</b> loaded. '+
+      'These are what the bid documents and the kickoff call for. The comparison will check the takeoff for anything here it has no line against.'+
+      (bidReq.kickoff_meta&&bidReq.kickoff_meta.verdict ? ' Kickoff verdict on this job was <b>'+esc(bidReq.kickoff_meta.verdict)+'</b>.' : '')+'</div>'+
+    '<div style="margin-top:6px"><button class="btnsm" onclick="toggleLines(this,\'req\')" type="button">Show the '+(f.length+k.length)+' item'+((f.length+k.length)===1?'':'s')+'</button></div>'+
+    '<div id="suplines-req" style="display:none;margin-top:12px"><div class="tablewrap"><table class="matrix"><thead><tr>'+
+      '<th style="width:110px">From</th><th>What the bid requires</th><th style="width:150px">Source</th></tr></thead><tbody>'+
+      f.map(x=>'<tr><td><span class="catchip">bid docs</span></td><td><div class="itemdesc">'+esc(x.requirement)+'</div>'+
+        (x.detail?'<div class="itemsub">'+esc(x.detail)+'</div>':'')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>').join('')+
+      k.map(x=>'<tr><td><span class="catchip">kickoff</span></td><td><div class="itemdesc">'+esc(x.label)+'</div>'+
+        (x.detail?'<div class="itemsub">'+esc(x.detail)+'</div>':'')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>').join('')+
+    '</tbody></table></div></div>';
+}
+function renderSpecOut(){
+  const out = document.getElementById('specOut');
+  if(!specBasis){ out.innerHTML=''; return; }
+  const items = specBasis.items||[];
+  const withModel = items.filter(i=>i.model || i.basis_of_design_manufacturer).length;
+  const noEqual = items.filter(i=>i.allows_equal===false && (i.model||i.basis_of_design_manufacturer)).length;
+  out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+items.length+' scheduled item'+(items.length===1?'':'s')+' loaded.</b> '+
+    (withModel===1 ? '1 of them names a manufacturer or model. ' : withModel+' of them name a manufacturer or model. ')+
+    (noEqual ? (noEqual===1 ? 'That one does not permit an approved equal, which makes any substitution against it a hard finding rather than a judgment call.'
+                            : noEqual+' of those do not permit an approved equal, which makes any substitution against them a hard finding rather than a judgment call.') : '')+'</div>'+
+    (specBasis.notes&&specBasis.notes.length ? '<div class="note info" style="margin-top:0">'+specBasis.notes.map(esc).join('<br>')+'</div>' : '')+
+    '<button class="btnsm" onclick="toggleLines(this,\'spec\')" type="button">Show the '+items.length+' item'+(items.length===1?'':'s')+'</button>'+
+    '<div id="suplines-spec" style="display:none;margin-top:12px"><div class="tablewrap"><table class="matrix"><thead><tr>'+
+      '<th style="width:60px">Tag</th><th>Item</th><th style="width:170px">Specified as</th><th style="width:80px">Equal?</th><th style="width:130px">Source</th></tr></thead><tbody>'+
+      items.map(i=>'<tr><td class="pricebox">'+esc(i.tag)+'</td><td><div class="itemdesc">'+esc(i.description)+'</div>'+
+        ((i.requirements||[]).length?'<div class="itemsub">'+esc((i.requirements||[]).join(' · '))+'</div>':'')+'</td>'+
+        '<td class="pricebox">'+esc([i.basis_of_design_manufacturer,i.model].filter(Boolean).join(' '))+
+          ((i.acceptable_manufacturers||[]).length?'<div class="itemsub">also: '+esc(i.acceptable_manufacturers.join(', '))+'</div>':'')+'</td>'+
+        '<td>'+(i.allows_equal?'<span class="mm equiv">yes</span>':'<span class="mm miss">no</span>')+'</td>'+
+        '<td class="pricebox">'+esc(i.source)+'</td></tr>').join('')+
+    '</tbody></table></div></div>';
+}
+
+/* ========================== COMPARISON (TAB 4) ==========================
+   Two lanes, both anchored on the takeoff.
+   Lane 1, quotes: every takeoff line against what each supplier actually sent.
+   Lane 2, coverage: the takeoff itself against what the bid documents, the
+   schedule and the kickoff sheet call for. Lane 2 catches the expensive kind
+   of miss, the item nobody quoted because nobody was ever asked to.
+   ====================================================================== */
+function renderReadiness(){
+  const el = document.getElementById('cmpReadiness');
+  const read = suppliers.filter(s=>s.data);
+  const reqCount = (bidReq ? (bidReq.findings||[]).length + (bidReq.kickoff_points||[]).length : 0) + (specBasis ? (specBasis.items||[]).length : 0);
+  let html = '';
+  if(!takeoffData){
+    html += '<div class="note err"><b>No takeoff loaded, so there is nothing to compare against.</b> The takeoff is the reference for this whole tool: it is what the job needs and it is what went out to the suppliers. Load it on tab 1 first.</div>';
+  } else {
+    const bits = [];
+    bits.push('<b>Takeoff v'+takeoffData.version+':</b> '+(takeoffData.items||[]).length+' lines. This is the reference.');
+    bits.push(read.length ? ('<b>'+read.length+' quote'+(read.length===1?'':'s')+' read:</b> '+read.map(s=>esc(s.name)).join(', '))
+                          : 'No supplier quotes read yet, so only the coverage check will run.');
+    bits.push(reqCount ? ('<b>'+reqCount+' bid requirement'+(reqCount===1?'':'s')+' loaded,</b> so the takeoff itself gets checked for gaps.')
+                       : 'Nothing pulled from the Bid Requirements Reader, so the takeoff will not be checked for gaps. That is the check that catches scope nobody quoted because nobody asked for it.');
+    html += '<div class="note info">'+bits.join('<br>')+'</div>';
+    if(read.length===1) html += '<div class="note warn">Only one quote is loaded. It still gets checked line by line against the takeoff, but there is nothing to compare it against supplier to supplier.</div>';
+  }
+  el.innerHTML = html;
+  document.getElementById('cmpBtn').disabled = !takeoffData;
+}
+function stopCompare(){ if(cmpAbort) cmpAbort.abort(); }
+function setCmpRunning(on){
+  document.getElementById('cmpBtn').disabled = on;
+  document.getElementById('cmpSpin').style.display = on ? 'inline-block' : 'none';
+  document.getElementById('cmpStopBtn').classList.toggle('show', on);
+}
+function catOf(x){ return CATEGORIES.indexOf(x&&x.category)>=0 ? x.category : 'Other'; }
+async function runCompare(){
+  const key = getKey();
+  const errEl = document.getElementById('cmpErr');
+  errEl.innerHTML = '';
+  if(!key){ errEl.innerHTML = '<div class="note err"><b>No API key.</b> Open Setup at the top and paste your Anthropic key.</div>'; return; }
+  if(!takeoffData){ errEl.innerHTML = '<div class="note err"><b>No takeoff loaded.</b> Load it on tab 1 first: it is the reference everything else is measured against.</div>'; return; }
+  const read = suppliers.filter(s=>s.data);
+
+  const cats = [];
+  const seen = new Set();
+  const push = c=>{ if(!seen.has(c)){ seen.add(c); cats.push(c); } };
+  (takeoffData.items||[]).forEach(it=>push(catOf(it)));
+  read.forEach(s=>(s.data.items||[]).forEach(it=>push(catOf(it))));
+  ((specBasis&&specBasis.items)||[]).forEach(it=>push(catOf(it)));
+  cats.sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b));
+
+  cmpAbort = new AbortController();
+  setCmpRunning(true);
+  const prog = document.getElementById('cmpProg');
+  const all = { rows:[], exceptions:[], coverage:{ checks:[], gaps:[] },
+    _run:{ status:'incomplete', categories:cats.slice(), done:[], failed:[], suppliers:read.map(s=>s.name),
+      takeoff_version: takeoffData.version, takeoff_lines:(takeoffData.items||[]).length,
+      had_schedule: !!specBasis, had_bid_req: !!bidReq, at:new Date().toISOString() } };
+  try{
+    /* ---- lane 1: quotes against the takeoff, one pass per category ---- */
+    if(read.length){
+      for(let i=0;i<cats.length;i++){
+        const cat = cats[i];
+        const payload = {
+          category: cat,
+          takeoff_items: (takeoffData.items||[]).filter(it=>catOf(it)===cat),
+          scheduled_items: ((specBasis&&specBasis.items)||[]).filter(it=>catOf(it)===cat),
+          suppliers: read.map(s=>({ supplier:s.name, items:(s.data.items||[]).filter(it=>catOf(it)===cat) }))
+        };
+        const quoted = payload.suppliers.reduce((a,x)=>a+x.items.length,0);
+        prog.textContent = 'Quotes, category '+(i+1)+' of '+cats.length+': '+cat+' — '+payload.takeoff_items.length+' takeoff line'+(payload.takeoff_items.length===1?'':'s')+' against '+quoted+' quoted line'+(quoted===1?'':'s')+'…';
+        if(!quoted && !payload.takeoff_items.length){ all._run.done.push(cat); continue; }
+        try{
+          const r = await fetchAndParseJSON(key,
+            [{type:'text', text:'CATEGORY UNDER COMPARISON: '+cat+'\n\nDATA:\n'+JSON.stringify(payload)}],
+            SYSTEM_COMPARE, cmpAbort.signal, 'cmpProg', 'the '+cat+' comparison');
+          (r.rows||[]).forEach(row=>{ row.category = cat; all.rows.push(row); });
+          (r.exceptions||[]).forEach(x=>{ x.category = cat; x.lane = 'quote'; all.exceptions.push(x); });
+          all._run.done.push(cat);
+        }catch(e){
+          if(e.name === 'AbortError') throw e;
+          console.error(e);
+          all._run.failed.push({ category:cat, error:e.message, lane:'quote' });
+        }
+      }
+    } else {
+      prog.textContent = 'No quotes loaded, skipping straight to the coverage check…';
+    }
+
+    /* ---- lane 2: the takeoff against what the bid requires ---- */
+    const reqs = [].concat(
+      ((bidReq&&bidReq.findings)||[]).map(f=>({ requirement:f.requirement, detail:f.detail, from:'bid documents', source:f.source||f.topic||'' })),
+      ((specBasis&&specBasis.items)||[]).map(i=>({ requirement:[i.tag,i.description].filter(Boolean).join(' '), detail:[[i.basis_of_design_manufacturer,i.model].filter(Boolean).join(' '), (i.requirements||[]).join('; ')].filter(Boolean).join(' · '), from:'schedule', source:i.source||'' })),
+      ((bidReq&&bidReq.kickoff_points)||[]).map(k=>({ requirement:k.label, detail:k.detail, from:'kickoff', source:k.source||'Kickoff Sheet' }))
+    ).filter(r=>r.requirement);
+    if(reqs.length){
+      // The whole takeoff rides along with every batch: a requirement can be covered by a line
+      // in any category, so slicing the takeoff by category here would invent false gaps.
+      const compactTakeoff = (takeoffData.items||[]).map(it=>({ d:it.description, q:it.qty, u:it.uom, c:it.category }));
+      const per = 25;
+      for(let i=0;i<reqs.length;i+=per){
+        const batch = reqs.slice(i, i+per);
+        prog.textContent = 'Coverage check: requirements '+(i+1)+' to '+Math.min(i+per, reqs.length)+' of '+reqs.length+' against the takeoff…';
+        try{
+          const r = await fetchAndParseJSON(key,
+            [{type:'text', text:'THE TAKEOFF (the estimator\'s own list, d=description q=quantity u=unit c=category):\n'+JSON.stringify(compactTakeoff)+
+              '\n\nREQUIREMENTS TO CHECK FOR COVERAGE:\n'+JSON.stringify(batch)}],
+            SYSTEM_COVERAGE, cmpAbort.signal, 'cmpProg', 'the coverage check');
+          (r.checks||[]).forEach(c=>all.coverage.checks.push(c));
+          (r.gaps||[]).forEach(g=>{
+            all.coverage.gaps.push(g);
+            all.exceptions.push({ kind:'TAKEOFF GAP', severity:g.severity||'medium', suppliers:[], lane:'coverage',
+              item:g.requirement||'', category:'Takeoff coverage', headline:g.headline||'', detail:(g.detail||'')+(g.source?(' Source: '+g.source+'.'):''), ask:g.action||'' });
+          });
+        }catch(e){
+          if(e.name === 'AbortError') throw e;
+          console.error(e);
+          all._run.failed.push({ category:'coverage batch '+(i/per+1), error:e.message, lane:'coverage' });
+        }
+      }
+      all._run.coverage_checked = reqs.length;
+    }
+
+    all._run.status = all._run.failed.length ? 'partial' : 'complete';
+    all.summary = buildSummary(all, read);
+    cmpData = all;
+    prog.textContent = 'Done. '+all.rows.length+' item rows, '+(all.coverage.checks||[]).length+' coverage checks, '+all.exceptions.length+' exception'+(all.exceptions.length===1?'':'s')+'.';
+    renderCompare(); renderExceptions(); updateCounts();
+    saveToCloud('p2_comparison', cmpData);
+  }catch(e){
+    if(e.name === 'AbortError'){
+      prog.textContent = 'Stopped. Nothing was saved for this run.';
+    }else{
+      console.error(e);
+      errEl.innerHTML = '<div class="note err"><b>The comparison could not finish.</b> '+esc(e.message)+'</div>';
+      prog.textContent = '';
+    }
+  }finally{
+    setCmpRunning(false);
+    cmpAbort = null;
+  }
+}
+// Every number on the scorecards is computed here, in plain arithmetic, from data already on
+// screen. None of it is asked of the model. If a total looks wrong you can add it up yourself
+// and find out why, which is the whole point.
+function buildSummary(all, read){
+  const per = {};
+  read.forEach(s=>{
+    const t = supplierTotal(s.data);
+    per[s.name] = { supplier:s.name, total:t.value, total_derived:t.derived, lines:(s.data.items||[]).length,
+      exact:0, equivalent:0, substitution:0, missing:0, unclear:0, low_confidence:0,
+      exceptions:0, high_exceptions:0,
+      exclusions:((s.data.quote_meta&&s.data.quote_meta.exclusions)||[]).length };
+  });
+  (all.rows||[]).forEach(row=>{
+    (row.suppliers||[]).forEach(c=>{
+      const p = per[c.supplier]; if(!p) return;
+      if(p[c.match] !== undefined) p[c.match]++;
+      if(c.confidence === 'low') p.low_confidence++;
+    });
+  });
+  (all.exceptions||[]).forEach(x=>{
+    (x.suppliers||[]).forEach(nm=>{
+      const p = per[nm]; if(!p) return;
+      p.exceptions++;
+      if(x.severity === 'high') p.high_exceptions++;
+    });
+  });
+  const rowsTotal = (all.rows||[]).length;
+  Object.values(per).forEach(p=>{ p.covered = p.exact + p.equivalent + p.substitution; p.rows_total = rowsTotal; });
+  const cov = (all.coverage&&all.coverage.checks)||[];
+  return { per: Object.values(per), rows_total: rowsTotal,
+    exceptions_total: (all.exceptions||[]).length,
+    high_total: (all.exceptions||[]).filter(x=>x.severity==='high').length,
+    coverage: { checked: cov.length,
+      covered: cov.filter(c=>c.verdict==='covered').length,
+      partial: cov.filter(c=>c.verdict==='partial').length,
+      not_covered: cov.filter(c=>c.verdict==='not covered').length,
+      not_material: cov.filter(c=>c.verdict==='not a material item').length } };
+}
+function matchBadge(m, conf){
+  const map = { exact:['exact','EXACT'], equivalent:['equiv','EQUIV'], substitution:['sub','SUB'], missing:['miss','MISSING'], unclear:['unclear','UNCLEAR'] };
+  const p = map[m] || map.unclear;
+  return '<span class="mm '+p[0]+'">'+p[1]+'</span>'+(conf && conf!=='high' ? '<span class="conf">'+esc(conf)+' confidence</span>' : '');
+}
+function covBadge(v){
+  const map = { 'covered':['exact','COVERED'], 'partial':['sub','PARTIAL'], 'not covered':['miss','NOT COVERED'], 'not a material item':['unclear','N/A'] };
+  const p = map[v] || map['not a material item'];
+  return '<span class="mm '+p[0]+'">'+p[1]+'</span>';
+}
+function renderCompare(){
+  const box = document.getElementById('cmpResults');
+  if(!cmpData){ box.style.display='none'; return; }
+  box.style.display='block';
+  const sum = cmpData.summary || buildSummary(cmpData, suppliers.filter(s=>s.data));
+  const names = (sum.per||[]).map(p=>p.supplier);
+  const run = cmpData._run || {};
+  const cov = sum.coverage || {};
+
+  let html = takeoffStaleBanner();
+  if(run.status === 'partial'){
+    html += '<div class="note err"><b>PARTIAL RESULT — do not rely on this yet.</b> '+run.failed.length+' pass'+(run.failed.length===1?'':'es')+' did not finish: '+
+      run.failed.map(f=>esc(f.category)).join(', ')+'. Run the comparison again to fill '+(run.failed.length===1?'it':'them')+' in.</div>';
+  }
+  html += '<div class="summary">'+
+    '<div class="proj"><div class="pl">Project</div><div class="pv">'+esc(projectName()||'Untitled project')+'</div>'+
+      '<div style="font-size:12px;color:#93AEC7;margin-top:6px">Measured against takeoff v'+(run.takeoff_version||'?')+' &middot; '+(run.takeoff_lines||0)+' lines &middot; '+
+      names.length+' supplier'+(names.length===1?'':'s')+' &middot; '+(run.had_bid_req?'takeoff checked for gaps':'no gap check run')+'</div></div>'+
+    '<div class="stat"><div class="n">'+sum.rows_total+'</div><div class="l">Items compared</div></div>'+
+    '<div class="stat '+(cov.not_covered?'warn':'good')+'"><div class="n">'+(cov.not_covered||0)+'</div><div class="l">Takeoff gaps</div></div>'+
+    '<div class="stat '+(sum.high_total?'warn':'good')+'"><div class="n">'+sum.high_total+'</div><div class="l">High severity</div></div>'+
+    '<div class="stat"><div class="n">'+sum.exceptions_total+'</div><div class="l">Total exceptions</div></div>'+
+  '</div>';
+
+  if(names.length){
+    html += '<div class="scorecards">'+(sum.per||[]).map(p=>{
+      const flags = [];
+      if(p.missing) flags.push(p.missing+' takeoff line'+(p.missing===1?'':'s')+' not quoted');
+      if(p.substitution) flags.push(p.substitution+' substitution'+(p.substitution===1?'':'s'));
+      if(p.unclear) flags.push(p.unclear+' unclear');
+      if(p.exclusions) flags.push(p.exclusions+' stated exclusion'+(p.exclusions===1?'':'s'));
+      return '<div class="sccard" style="border-top-color:'+(p.high_exceptions?'var(--rust)':(p.exceptions?'#D89B2C':'var(--green)'))+'">'+
+        '<div class="scname">'+esc(p.supplier)+'</div>'+
+        '<div class="sctot">'+(p.total?money(p.total):'no total')+'</div>'+
+        '<div class="sctotl">'+(p.total_derived&&p.total ? 'added up from the lines' : 'as printed on the quote')+'</div>'+
+        '<div class="scrow"><span>Covers</span><span>'+p.covered+' of '+p.rows_total+'</span></div>'+
+        '<div class="scrow"><span>Exact matches</span><span>'+p.exact+'</span></div>'+
+        '<div class="scrow"><span>Open exceptions</span><span>'+p.exceptions+(p.high_exceptions?' ('+p.high_exceptions+' high)':'')+'</span></div>'+
+        (flags.length ? '<div class="scflag">'+esc(flags.join(' · '))+'</div>' : '')+
+      '</div>';
+    }).join('')+'</div>'+
+    '<div class="note warn"><b>These totals are not yet comparable to each other.</b> Each one is only the sum of what that supplier actually put on paper. A cheaper number nearly always has a reason sitting in the exceptions list, so clear those first, then compare.</div>';
+  }
+
+  /* ---- coverage lane ---- */
+  if(cov.checked){
+    const checks = (cmpData.coverage&&cmpData.coverage.checks)||[];
+    const interesting = checks.filter(c=>c.verdict!=='not a material item');
+    html += '<div class="grp"><div class="grp-h"><span class="t">Does the takeoff cover what the bid asks for?</span>'+
+      '<span class="c">'+cov.checked+' requirement'+(cov.checked===1?'':'s')+' checked</span></div>'+
+      '<div class="note '+(cov.not_covered?'err':'ok')+'"><b>'+(cov.covered||0)+' covered, '+(cov.partial||0)+' partly covered, '+(cov.not_covered||0)+' not covered.</b> '+
+        ((cov.not_material||0) ? (cov.not_material+' requirement'+(cov.not_material===1?' was':'s were')+' not something a material takeoff could cover (submittals, bonding, warranty terms) and '+(cov.not_material===1?'is':'are')+' hidden below. ') : '')+
+        (cov.not_covered ? 'A line the takeoff never had will be missing from every quote and will look perfectly clean in the supplier comparison. This is the expensive kind of miss.' : 'Nothing the bid requires is missing from the takeoff.')+'</div>'+
+      (interesting.length ? '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:120px">Verdict</th><th>What the bid requires</th><th style="width:90px">From</th><th style="min-width:220px">Takeoff line that covers it</th></tr></thead><tbody>'+
+        interesting.sort((a,b)=>({'not covered':0,'partial':1,'covered':2}[a.verdict]??3)-({'not covered':0,'partial':1,'covered':2}[b.verdict]??3))
+        .map(c=>'<tr'+(c.verdict!=='covered'?' class="hasissue"':'')+'>'+
+          '<td>'+covBadge(c.verdict)+(c.confidence&&c.confidence!=='high'?'<div class="conf">'+esc(c.confidence)+' confidence</div>':'')+'</td>'+
+          '<td><div class="itemdesc">'+esc(c.requirement)+'</div>'+(c.source?'<div class="itemsub">'+esc(c.source)+'</div>':'')+'</td>'+
+          '<td><span class="catchip">'+esc(c.from||'')+'</span></td>'+
+          '<td class="supcell">'+(c.takeoff_line?esc(c.takeoff_line):'<span style="color:var(--rust)">nothing</span>')+
+            (c.note?'<div class="why">'+esc(c.note)+'</div>':'')+'</td></tr>').join('')+
+        '</tbody></table></div>' : '')+
+      ((cov.not_material||0) ? '<div style="margin-top:10px"><button class="btnsm" onclick="toggleLines(this,\'covna\')" type="button">Show the '+cov.not_material+' non-material requirement'+(cov.not_material===1?'':'s')+'</button>'+
+        '<div id="suplines-covna" style="display:none;margin-top:10px"><div class="tablewrap"><table class="matrix"><thead><tr><th>Requirement</th><th style="width:90px">From</th><th style="min-width:240px">Why it is not a takeoff item</th></tr></thead><tbody>'+
+        checks.filter(c=>c.verdict==='not a material item').map(c=>'<tr><td class="itemdesc">'+esc(c.requirement)+'</td><td><span class="catchip">'+esc(c.from||'')+'</span></td><td class="supcell">'+esc(c.note||'')+'</td></tr>').join('')+
+        '</tbody></table></div></div></div>' : '')+
+    '</div>';
+  }
+
+  /* ---- quote lane matrix, grouped by category ---- */
+  if(names.length){
+    const byCat = {};
+    (cmpData.rows||[]).forEach(r=>{ (byCat[r.category||'Other'] = byCat[r.category||'Other'] || []).push(r); });
+    Object.keys(byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).forEach(cat=>{
+      const rows = byCat[cat];
+      const flagged = rows.filter(r=>(r.issues||[]).length).length;
+      html += '<div class="grp"><div class="grp-h"><span class="t">'+esc(cat)+'</span>'+
+        '<span class="c">'+rows.length+' item'+(rows.length===1?'':'s')+(flagged?' &middot; '+flagged+' flagged':'')+'</span></div>'+
+        '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:230px">Takeoff line</th>'+
+        names.map(n=>'<th class="supcol" style="min-width:190px">'+esc(n)+'</th>').join('')+'</tr></thead><tbody>'+
+        rows.map(r=>{
+          const cells = names.map(n=>{
+            const c = (r.suppliers||[]).find(x=>x.supplier===n) || { match:'unclear', confidence:'low', why:'this supplier was not given a verdict on this row' };
+            const price = c.extended_price ? money(c.extended_price) : (c.unit_price ? money(c.unit_price)+' /'+esc(c.uom||'ea') : '');
+            return '<td class="supcell">'+matchBadge(c.match, c.confidence)+
+              (c.quoted_as ? '<div style="margin-top:4px;line-height:1.35">'+esc(c.quoted_as)+'</div>' : '')+
+              ([c.manufacturer,c.model].filter(Boolean).length ? '<div class="itemsub">'+esc([c.manufacturer,c.model].filter(Boolean).join(' '))+'</div>' : '')+
+              ((c.qty||c.uom) ? '<div class="qtybox" style="margin-top:3px">'+(c.qty?esc(c.qty):'')+' '+esc(c.uom||'')+'</div>' : '')+
+              (price ? '<div class="pricebox">'+price+'</div>' : '')+
+              (c.why ? '<div class="why">'+esc(c.why)+'</div>' : '')+
+            '</td>';
+          }).join('');
+          return '<tr'+((r.issues||[]).length?' class="hasissue"':'')+'><td>'+
+            '<div class="itemdesc">'+esc(r.takeoff_line || r.item)+'</div>'+
+            '<div class="itemsub">'+[r.tag, r.spec_model, (r.required_qty? (r.required_qty+' '+(r.required_uom||'')) : ''), r.required_source].filter(Boolean).map(esc).join(' · ')+'</div>'+
+            (r.required_source==='quotes only' ? '<div class="itemsub" style="color:var(--rust)">not on the takeoff at all</div>' : '')+
+            (r.spec_model && r.allows_equal===false ? '<div class="itemsub" style="color:var(--rust)">no approved equal permitted</div>' : '')+
+            ((r.issues||[]).length ? '<div class="why" style="color:var(--rust)">'+esc(r.issues.join(' · '))+'</div>' : '')+
+          '</td>'+cells+'</tr>';
+        }).join('')+'</tbody></table></div></div>';
+    });
+  }
+
+  html += '<div class="resbar">'+
+    '<button class="btn2 primary" onclick="downloadCompareExcel(this)" type="button">Download Excel</button>'+
+    '<button class="btn2" onclick="downloadComparePDF(this)" type="button">Download PDF</button>'+
+    '<button class="btn2" onclick="copyExceptionsText(this)" type="button">Copy exceptions as text</button>'+
+    '<button class="btn2" onclick="downloadBackup(\'p2_comparison\', cmpData)" type="button">Download backup</button>'+
+  '</div>';
+  box.innerHTML = html;
+}
+
+/* ========================== EXCEPTIONS (TAB 5) ========================== */
+function setExcFilter(f){ excFilter = f; renderExceptions(); }
+function toggleExcDone(i){
+  const x = (cmpData.exceptions||[])[i]; if(!x) return;
+  x._done = !x._done;
+  renderExceptions();
+  saveToCloud('p2_comparison', cmpData);
+}
+function renderExceptions(){
+  const box = document.getElementById('excResults');
+  const empty = document.getElementById('excEmpty');
+  if(!cmpData || !(cmpData.exceptions||[]).length){
+    box.style.display='none';
+    empty.style.display='block';
+    empty.innerHTML = cmpData
+      ? '<div class="note ok" style="margin:0"><b>Nothing needs your judgment.</b> The comparison ran across '+((cmpData.rows||[]).length)+' items and every one resolved cleanly. That is a real result, not an empty screen, but it is rare enough that it is worth spot-checking two or three rows on the comparison tab before you trust it.</div>'
+      : '<p class="hint" style="margin:0">Nothing here yet. Load the takeoff on tab 1, read the quotes on tab 2, then run the comparison on tab 4.</p>';
+    return;
+  }
+  empty.style.display='none';
+  box.style.display='block';
+  const list = cmpData.exceptions.map((x,i)=>({x,i}));
+  const counts = { all:list.length, high:0, medium:0, low:0, open:0, coverage:0, quote:0 };
+  list.forEach(({x})=>{
+    counts[x.severity]=(counts[x.severity]||0)+1;
+    if(!x._done) counts.open++;
+    counts[x.lane==='coverage'?'coverage':'quote']++;
+  });
+  const order = { high:0, medium:1, low:2 };
+  const shown = list
+    .filter(({x})=> excFilter==='all' ? true
+      : excFilter==='open' ? !x._done
+      : excFilter==='coverage' ? x.lane==='coverage'
+      : excFilter==='quote' ? x.lane!=='coverage'
+      : x.severity===excFilter)
+    .sort((a,b)=> (a.x._done?1:0)-(b.x._done?1:0) || (order[a.x.severity]??3)-(order[b.x.severity]??3));
+
+  box.innerHTML = takeoffStaleBanner()+
+    '<div class="filterbar">'+
+      [['all','Everything ('+counts.all+')'],['open','Still open ('+counts.open+')'],
+       ['coverage','Takeoff gaps ('+counts.coverage+')'],['quote','Quote issues ('+counts.quote+')'],
+       ['high','High ('+(counts.high||0)+')'],['medium','Medium ('+(counts.medium||0)+')'],['low','Low ('+(counts.low||0)+')']]
+      .map(f=>'<button class="fb'+(excFilter===f[0]?' on':'')+'" onclick="setExcFilter(\''+f[0]+'\')" type="button">'+f[1]+'</button>').join('')+
+    '</div>'+
+    (shown.length ? shown.map(({x,i})=>'<div class="exc '+esc(x.severity||'low')+(x._done?' done':'')+'">'+
+      '<input type="checkbox" '+(x._done?'checked':'')+' onchange="toggleExcDone('+i+')" title="Tick when you have cleared this">'+
+      '<div class="body">'+
+        '<div class="headline">'+esc(x.headline)+'</div>'+
+        (x.detail?'<div class="detail">'+esc(x.detail)+'</div>':'')+
+        (x.ask?'<div class="'+(x.lane==='coverage'?'act':'ask')+'">'+esc(x.ask)+'</div>':'')+
+        '<div class="metaline">'+
+          '<span class="sev '+esc(x.severity||'low')+'">'+esc(x.severity||'low')+'</span>'+
+          '<span class="kind">'+esc(x.kind||'')+'</span>'+
+          (x.item?'<span class="whochip">'+esc(x.item)+'</span>':'')+
+          ((x.suppliers||[]).length?'<span class="whochip">'+esc(x.suppliers.join(', '))+'</span>':'')+
+          (x.category?'<span class="catchip">'+esc(x.category)+'</span>':'')+
+        '</div>'+
+      '</div></div>').join('')
+     : '<div class="note info">Nothing under that filter.</div>')+
+    '<div class="resbar"><button class="btn2 primary" onclick="copyExceptionsText(this)" type="button">Copy as text</button>'+
+      '<button class="btn2" onclick="downloadCompareExcel(this)" type="button">Download Excel</button></div>';
+}
+
+/* ============================== EXPORTS ================================= */
+function cmpFname(ext){ const n=projectName().trim(); return (n?slugify(n)+'-':'')+'quote-comparison.'+ext; }
+function downloadCompareExcel(btn){
+  if(!cmpData) return;
+  if(typeof XLSX==='undefined'){ alert('The Excel library did not load. Check the connection and reload the page.'); return; }
+  try{
+    const wb = XLSX.utils.book_new();
+    const names = (cmpData.summary&&cmpData.summary.per||[]).map(p=>p.supplier);
+
+    // Sheet 1: the exceptions. First sheet on purpose, because it is the one that gets read.
+    const ex = [['Cleared','Severity','Lane','Kind','Category','Item','Supplier(s)','What is wrong','Detail','What to do / ask them']];
+    (cmpData.exceptions||[]).slice().sort((a,b)=>({high:0,medium:1,low:2}[a.severity]??3)-({high:0,medium:1,low:2}[b.severity]??3))
+      .forEach(x=>ex.push([x._done?'X':'', (x.severity||'').toUpperCase(), x.lane==='coverage'?'Takeoff gap':'Quote issue', x.kind||'', x.category||'', x.item||'', (x.suppliers||[]).join(', '), x.headline||'', x.detail||'', x.ask||'']));
+    const ws1 = XLSX.utils.aoa_to_sheet(ex);
+    ws1['!cols']=[{wch:8},{wch:10},{wch:13},{wch:15},{wch:16},{wch:28},{wch:20},{wch:52},{wch:56},{wch:56}];
+    XLSX.utils.book_append_sheet(wb, ws1, 'Exceptions');
+
+    // Sheet 2: the full matrix, one block of columns per supplier.
+    const head = ['Category','Item','Tag','Specified as','Equal OK','Required qty','Required UOM','Required from','Issues'];
+    names.forEach(n=>head.push(n+' match', n+' conf', n+' quoted as', n+' qty', n+' uom', n+' unit', n+' extended', n+' why'));
+    const mx = [head];
+    (cmpData.rows||[]).forEach(r=>{
+      const row = [r.category||'', r.item||'', r.tag||'', r.spec_model||'', r.allows_equal===false?'NO':'', r.required_qty||'', r.required_uom||'', r.required_source||'', (r.issues||[]).join(' | ')];
+      names.forEach(n=>{
+        const c = (r.suppliers||[]).find(x=>x.supplier===n) || {};
+        row.push((c.match||'').toUpperCase(), c.confidence||'', c.quoted_as||'', c.qty||'', c.uom||'', c.unit_price||'', c.extended_price||'', c.why||'');
+      });
+      mx.push(row);
+    });
+    const ws2 = XLSX.utils.aoa_to_sheet(mx);
+    ws2['!cols']=[{wch:16},{wch:34},{wch:8},{wch:24},{wch:9},{wch:12},{wch:12},{wch:14},{wch:30}].concat(
+      names.flatMap(()=>[{wch:12},{wch:8},{wch:38},{wch:9},{wch:8},{wch:11},{wch:12},{wch:34}]));
+    XLSX.utils.book_append_sheet(wb, ws2, 'Comparison');
+
+    // Sheet 3: the coverage lane, takeoff against what the bid requires.
+    if((cmpData.coverage&&cmpData.coverage.checks||[]).length){
+      const cvr = [['Verdict','Confidence','Requirement','From','Source','Takeoff line that covers it','Note']];
+      cmpData.coverage.checks.slice()
+        .sort((a,b)=>({'not covered':0,'partial':1,'covered':2,'not a material item':3}[a.verdict]??4)-({'not covered':0,'partial':1,'covered':2,'not a material item':3}[b.verdict]??4))
+        .forEach(c=>cvr.push([(c.verdict||'').toUpperCase(), c.confidence||'', c.requirement||'', c.from||'', c.source||'', c.takeoff_line||'', c.note||'']));
+      const wsC = XLSX.utils.aoa_to_sheet(cvr);
+      wsC['!cols']=[{wch:18},{wch:11},{wch:46},{wch:14},{wch:20},{wch:44},{wch:52}];
+      XLSX.utils.book_append_sheet(wb, wsC, 'Takeoff coverage');
+    }
+
+    // Sheet 4: the takeoff itself, the version this comparison was measured against.
+    if(takeoffData){
+      const tk = [['Takeoff v'+takeoffData.version+' — the reference for this comparison'],
+                  ['Read '+new Date(takeoffData.at).toLocaleString()+' from '+((takeoffData.sources||[]).join(', ')||'pasted text')],[],
+                  ['#','Description','Category','Qty','UOM','Manufacturer','Model','Notes']];
+      (takeoffData.items||[]).forEach((it,i)=>tk.push([i+1, it.description||'', it.category||'', it.qty||'', it.uom||'', it.manufacturer||'', it.model||'', it.notes||'']));
+      const wsT = XLSX.utils.aoa_to_sheet(tk);
+      wsT['!cols']=[{wch:5},{wch:52},{wch:18},{wch:9},{wch:8},{wch:18},{wch:18},{wch:34}];
+      XLSX.utils.book_append_sheet(wb, wsT, 'Takeoff v'+takeoffData.version);
+    }
+
+    // Sheet 5: every extracted quote line, verbatim, so the estimator can audit the read itself.
+    const lines = [['Supplier','Line','Description','Category','Qty','UOM','Manufacturer','Model','Unit','Extended','Package','Substitution wording','Page','Notes']];
+    suppliers.filter(s=>s.data).forEach(s=>(s.data.items||[]).forEach(it=>lines.push([
+      s.name, it.line_ref||'', it.description||'', it.category||'', it.qty||'', it.uom||'', it.manufacturer||'', it.model||'',
+      it.unit_price||'', it.extended_price||'', it.is_package?'YES':'', it.substitution_language||'', it.page||'', it.notes||''])));
+    const ws3 = XLSX.utils.aoa_to_sheet(lines);
+    ws3['!cols']=[{wch:18},{wch:8},{wch:46},{wch:16},{wch:9},{wch:7},{wch:16},{wch:16},{wch:11},{wch:12},{wch:9},{wch:22},{wch:6},{wch:30}];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Quote lines');
+
+    // Sheet 4: the terms each quote carries. Estimators get hurt by these more than by prices.
+    const terms = [['Supplier','Quote #','Dated','Valid until','Lead time','Freight','Tax','Terms','Exclusions','Notes','Total as printed','Total added up']];
+    suppliers.filter(s=>s.data).forEach(s=>{
+      const m = s.data.quote_meta||{}, t = supplierTotal(s.data);
+      terms.push([s.name, m.quote_number||'', m.quote_date||'', m.valid_until||'', m.lead_time||'', m.freight||'', m.tax||'', m.terms||'',
+        (m.exclusions||[]).join(' | '), (m.notes||[]).join(' | '),
+        num(s.data.totals_stated&&s.data.totals_stated.total)||'', t.derived?t.value:'']);
+    });
+    const ws4 = XLSX.utils.aoa_to_sheet(terms);
+    ws4['!cols']=[{wch:18},{wch:12},{wch:12},{wch:12},{wch:16},{wch:24},{wch:20},{wch:30},{wch:60},{wch:40},{wch:14},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, ws4, 'Quote terms');
+
+    XLSX.writeFile(wb, cmpFname('xlsx'));
+    flash(btn);
+  }catch(e){
+    console.error(e);
+    alert('Excel download failed: '+e.message+'. Try "Copy exceptions as text" instead.');
+  }
+}
+function downloadComparePDF(btn){
+  if(!cmpData) return;
+  if(!window.jspdf || !window.jspdf.jsPDF){ alert('The PDF library did not load. Check the connection and reload the page.'); return; }
+  const rowCount = (cmpData.rows||[]).length;
+  if(rowCount > 150 && !confirm(rowCount+' rows is a lot for a PDF to lay out in the browser and can make the tab look frozen while it works. Excel handles large lists much faster. Continue anyway?')) return;
+  try{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({unit:'pt', format:'letter', orientation:'landscape'});
+    const M = 34, pageW = 792; const maxW = pageW - 2*M; let y = 46;
+    const sum = cmpData.summary || {};
+    doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(12,68,124);
+    doc.text((projectName()||'Untitled project')+'  Supplier Quote Comparison', M, y); y += 20;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(90,90,90);
+    const cvr = sum.coverage||{};
+    doc.text('Measured against takeoff v'+((cmpData._run&&cmpData._run.takeoff_version)||'?')+' ('+((cmpData._run&&cmpData._run.takeoff_lines)||0)+' lines).  '+
+      sum.rows_total+' items compared across '+((sum.per||[]).length)+' suppliers.  '+
+      (sum.exceptions_total||0)+' exceptions, '+(sum.high_total||0)+' high severity.'+
+      (cvr.checked ? ('  Takeoff coverage: '+(cvr.not_covered||0)+' of '+cvr.checked+' bid requirements not covered.') : '  No takeoff gap check was run.'), M, y);
+    y += 16;
+    doc.setTextColor(122,46,18); doc.setFont('helvetica','bold'); doc.setFontSize(9);
+    doc.splitTextToSize('Supplier totals below are only the sum of what each supplier put on paper. They are not comparable to each other until the exceptions are cleared.', maxW)
+      .forEach(l=>{ doc.text(l, M, y); y += 12; });
+    y += 6;
+
+    doc.autoTable({
+      startY: y,
+      head: [['Supplier','Total','Covers','Exact','Subs','Missing','Unclear','Open exceptions']],
+      body: (sum.per||[]).map(p=>[p.supplier, p.total?money(p.total)+(p.total_derived?' *':''):'no total', p.covered+' / '+p.rows_total,
+        p.exact, p.substitution, p.missing, p.unclear, p.exceptions+(p.high_exceptions?' ('+p.high_exceptions+' high)':'')]),
+      styles:{ font:'helvetica', fontSize:9, cellPadding:5, textColor:[26,37,48], lineColor:[220,226,232], lineWidth:0.5 },
+      headStyles:{ fillColor:[12,68,124], textColor:255, fontStyle:'bold' },
+      margin:{left:M,right:M}
+    });
+    y = doc.lastAutoTable.finalY + 10;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(120,120,120);
+    doc.text('* total added up from the quote lines, not printed on the quote itself', M, y); y += 18;
+
+    const exs = (cmpData.exceptions||[]).slice().sort((a,b)=>({high:0,medium:1,low:2}[a.severity]??3)-({high:0,medium:1,low:2}[b.severity]??3));
+    if(exs.length){
+      doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(12,68,124);
+      doc.text('Exceptions — what needs a human', M, y); y += 6;
+      doc.autoTable({
+        startY: y + 6,
+        head: [['','Sev','Lane','Kind','Item','Supplier(s)','What is wrong','What to do']],
+        body: exs.map(x=>[x._done?'X':'', (x.severity||'').toUpperCase().slice(0,4), x.lane==='coverage'?'Takeoff':'Quote', x.kind||'', x.item||'', (x.suppliers||[]).join(', '),
+          (x.headline||'')+(x.detail?('\n'+x.detail):''), x.ask||'']),
+        styles:{ font:'helvetica', fontSize:8.5, cellPadding:4, valign:'top', textColor:[26,37,48], lineColor:[220,226,232], lineWidth:0.5, overflow:'linebreak' },
+        headStyles:{ fillColor:[12,68,124], textColor:255, fontStyle:'bold' },
+        alternateRowStyles:{ fillColor:[247,249,251] },
+        columnStyles:{ 0:{cellWidth:14}, 1:{cellWidth:26,fontStyle:'bold'}, 2:{cellWidth:40,fontSize:7.5}, 3:{cellWidth:54,fontSize:7.5}, 4:{cellWidth:88}, 5:{cellWidth:62,fontSize:7.5}, 6:{cellWidth:'auto'}, 7:{cellWidth:165} },
+        didParseCell: function(hook){
+          if(hook.section!=='body') return;
+          const x = exs[hook.row.index]; if(!x) return;
+          if(x._done){ hook.cell.styles.fillColor=[232,244,236]; hook.cell.styles.textColor=[110,120,115]; }
+          else if(x.severity==='high'){ hook.cell.styles.fillColor=[251,236,228]; }
+        },
+        margin:{left:M,right:M}
+      });
+    }
+    doc.save(cmpFname('pdf'));
+    flash(btn);
+  }catch(e){
+    console.error(e);
+    alert('PDF download failed: '+e.message+'. Try Excel instead, it handles large lists more reliably.');
+  }
+}
+function copyExceptionsText(btn){
+  if(!cmpData) return;
+  const exs = (cmpData.exceptions||[]).slice().sort((a,b)=>({high:0,medium:1,low:2}[a.severity]??3)-({high:0,medium:1,low:2}[b.severity]??3));
+  let t = (projectName()||'Untitled project')+' — supplier quote exceptions\n';
+  t += exs.length+' open item'+(exs.length===1?'':'s')+', '+exs.filter(x=>x.severity==='high').length+' high severity\n\n';
+  exs.forEach(x=>{
+    t += (x._done?'[x] ':'[ ] ')+(x.severity||'').toUpperCase()+' · '+(x.kind||'')+(x.lane==='coverage'?' · takeoff gap':'')+((x.suppliers||[]).length?(' · '+x.suppliers.join(', ')):'')+'\n';
+    t += '    '+(x.headline||'')+'\n';
+    if(x.detail) t += '    '+x.detail+'\n';
+    if(x.ask) t += '    '+(x.lane==='coverage'?'DO: ':'ASK: ')+x.ask+'\n';
+    t += '\n';
+  });
+  navigator.clipboard.writeText(t).then(()=>flash(btn,'Copied ✓'), ()=>alert('Could not copy to the clipboard. Use Download Excel instead.'));
+}
+
+/* ================================= ASK ================================== */
+function stopAsk(){ if(askAbort) askAbort.abort(); }
+function askPayload(){
+  return {
+    project: projectName(),
+    quotes: suppliers.filter(s=>s.data).map(s=>({ supplier:s.name, quote_meta:s.data.quote_meta, totals_stated:s.data.totals_stated, items:s.data.items })),
+    takeoff: takeoffData ? { version: takeoffData.version, read_at: takeoffData.at, items: takeoffData.items } : null,
+    scheduled_items: (specBasis&&specBasis.items) || [],
+    bid_requirements: bidReq ? { findings: bidReq.findings, kickoff_points: bidReq.kickoff_points } : null,
+    comparison: cmpData ? { rows: cmpData.rows, exceptions: cmpData.exceptions, coverage: cmpData.coverage } : null
+  };
+}
+async function runAsk(){
+  const key = getKey();
+  const out = document.getElementById('askOut');
+  const q = document.getElementById('askQ').value.trim();
+  if(!key){ out.innerHTML = '<div class="note err"><b>No API key.</b> Open Setup at the top and paste your Anthropic key.</div>'; return; }
+  if(!q){ setHint('askHint','Type a question first.'); return; }
+  const payload = askPayload();
+  if(!payload.quotes.length && !payload.takeoff){ out.innerHTML = '<div class="note err"><b>Nothing loaded to answer from.</b> Load the takeoff on tab 1 or read a quote on tab 2.</div>'; return; }
+  askAbort = new AbortController();
+  document.getElementById('askBtn').disabled = true;
+  document.getElementById('askStopBtn').classList.add('show');
+  setHint('askHint','Thinking…');
+  try{
+    const r = await fetchAndParseJSON(key,
+      [{type:'text', text:'QUESTION:\n'+q+'\n\nPROJECT DATA:\n'+JSON.stringify(payload)}],
+      SYSTEM_ASK_P2, askAbort.signal, 'askHint', 'your question');
+    askLog.unshift({ q, a: r.answer||'', src: r.source||'', found: r.found!==false });
+    renderAsk();
+    setHint('askHint','');
+    document.getElementById('askQ').value = '';
+  }catch(e){
+    if(e.name === 'AbortError') setHint('askHint','Stopped.');
+    else{ out.innerHTML = '<div class="note err"><b>Could not answer that.</b> '+esc(e.message)+'</div>'; setHint('askHint',''); }
+  }finally{
+    document.getElementById('askBtn').disabled = false;
+    document.getElementById('askStopBtn').classList.remove('show');
+    askAbort = null;
+  }
+}
+function renderAsk(){
+  document.getElementById('askOut').innerHTML = askLog.map(e=>
+    '<div class="askq"><div class="qq">'+esc(e.q)+'</div><div class="aa">'+esc(e.a)+'</div>'+
+    (e.src?'<div class="src">from: '+esc(e.src)+'</div>':'')+
+    (!e.found?'<div class="src" style="color:var(--rust)">not found in what is currently loaded</div>':'')+'</div>').join('');
+}
+
+/* ============================ CLEAR + BOOT ============================== */
+function clearProject(btn){
+  if(!confirm('Clear every uploaded quote and every result in this tab? Your API key, Worker URL and project name stay put, and anything already saved to the cloud stays there.')) return;
+  suppliers = []; supplierSeq = 0;
+  specBasis = null; bidReq = null; takeoffData = null; cmpData = null; askLog = [];
+  specFiles.length = 0; toFiles.length = 0;
+  document.getElementById('specText').value = '';
+  document.getElementById('toText').value = '';
+  document.getElementById('specFilelist').innerHTML = '';
+  document.getElementById('toFilelist').innerHTML = '';
+  document.getElementById('specOut').innerHTML = '';
+  document.getElementById('toOut').innerHTML = '';
+  document.getElementById('toVersions').innerHTML = '';
+  document.getElementById('reqOut').innerHTML = '';
+  document.getElementById('pullMsg').textContent = '';
+  document.getElementById('cmpProg').textContent = '';
+  document.getElementById('cmpErr').innerHTML = '';
+  document.getElementById('cmpResults').style.display = 'none';
+  renderAsk();
+  for(let i=0;i<3;i++) newSupplierSlot('');
+  renderSuppliers(); renderQuoteResults(); renderExceptions(); updateCounts();
+  setPageTab('takeoff');
+  flash(btn, 'Cleared ✓');
+}
+for(let i=0;i<3;i++) newSupplierSlot('');
+renderSuppliers();
+renderQuoteResults();
+renderExceptions();
+setSpecMode('file');
+setToMode('file');
+renderToOut();
+renderReqOut();
+updateCounts();
+</script>
+</body>
+</html>
