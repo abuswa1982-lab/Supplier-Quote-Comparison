@@ -872,7 +872,8 @@ async function loadCloudProject(btn){
     if(fresh){
       bidReq = fresh;
       renderReqOut();
-      loaded.push(fresh.findings.length+' bid requirement'+(fresh.findings.length===1?'':'s')+(fresh._had_kickoff?' and the kickoff sheet':''));
+      loaded.push(fresh.findings.length+' material bid requirement'+(fresh.findings.length===1?'':'s')+
+        ' out of '+fresh._pool+' finding'+(fresh._pool===1?'':'s')+(fresh._had_kickoff?', and the kickoff sheet':''));
       // Only write it back if nothing was stored yet, or the Bid Requirements Reader has moved
       // on since. No point burning a save on every single load.
       if(!stored || (stored.findings||[]).length !== fresh.findings.length || (stored.kickoff_points||[]).length !== fresh.kickoff_points.length){
@@ -887,7 +888,7 @@ async function loadCloudProject(btn){
     }
     const msgEl = document.getElementById('pullMsg');
     if(msgEl) msgEl.textContent = bidReq
-      ? ('Came across automatically when the project loaded: '+(bidReq.findings||[]).length+' material-related findings out of '+(bidReq._pool||0)+(bidReq._had_kickoff?', plus the kickoff sheet':'')+'. Only press this if you have run the Bid Requirements Reader again since.')
+      ? ('Came across automatically when the project loaded. '+bidReqAccountingText(bidReq)+' Only press this if you have run the Bid Requirements Reader again since.')
       : 'Nothing from the Bid Requirements Reader is saved under this project name yet.';
     updateCounts();
     // Say what actually happened. "Nothing here" when the bid data is plainly sitting in the
@@ -1950,7 +1951,28 @@ function downloadTakeoffExcel(btn){
 }
 
 /* --------------------------- bid requirements --------------------------- */
-const MATERIAL_RX = /(fixture|water closet|\bwc\b|lavatory|urinal|sink|faucet|carrier|floor drain|roof drain|cleanout|trap|interceptor|shower|tub|water heater|heater|pump|boiler|backflow|hydrant|valve|copper|pvc|cpvc|pex|cast iron|\bpipe\b|fitting|insulat|hanger|support|sleeve|escutcheon|hose bibb|mixing valve|expansion|specialt|equipment|manufactur|model|approved equal|or equal|basis of design|substitut|product|schedule|furnish|provide|material)/i;
+// A bid requirement only counts here if it names something a takeoff could actually have a
+// line for. The first version of this also matched verbs like "provide" and "furnish", which
+// appear in nearly every sentence of a spec, so it passed thousands of findings through and
+// called that filtering. It now has to be a material noun, or the kind of product-identity
+// language that only ever appears next to one.
+const MATERIAL_NOUN_RX = new RegExp([
+  'water closet','\\bwc-?\\d','lavator','urinal','\\bsink\\b','faucet','carrier','\\bdrain\\b','floor drain','roof drain','area drain','trench drain',
+  'cleanout','\\btrap\\b','trap primer','interceptor','shower','bathtub','\\btub\\b','water heater','water cooler','drinking fountain','\\bewc\\b',
+  '\\bpump\\b','boiler','backflow','hydrant','hose bibb','mixing valve','\\bvalve','\\bcopper\\b','\\bpvc\\b','\\bcpvc\\b','\\bpex\\b',
+  'cast iron','ductile','galvaniz','black steel','\\bpipe\\b','piping','tubing','\\btube\\b','fitting','coupling','\\belbow\\b','\\btee\\b','\\bunion\\b',
+  'flange','insulat','hanger','clevis','\\bstrut\\b','sleeve','escutcheon','expansion joint','shock arrest','water hammer','\\bgauge\\b','thermometer',
+  'strainer','vacuum breaker','\\bsump\\b','sewage ejector','\\bair gap\\b','dielectric','nipple','\\bmeter\\b','pressure reducing','check valve',
+  'gate valve','ball valve','butterfly valve','relief valve','\\bfixture','\\bflush','\\bbibb\\b','no-hub','\\bsolder','\\bbraz','grease intercept'
+].join('|'), 'i');
+// Language that only shows up when a specific product is being named, approved or swapped.
+const PRODUCT_ID_RX = /(basis of design|approved equal|or equal|as manufactured by|acceptable manufacturer|model (?:no\.?|number|#)|catalog (?:no\.?|number|#)|substitut)/i;
+function isMaterialRequirement(text){
+  const t = String(text||'');
+  if(t.replace(/\s+/g,' ').trim().length < 8) return false;
+  return MATERIAL_NOUN_RX.test(t) || PRODUCT_ID_RX.test(t);
+}
+function reqKey(t){ return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,160); }
 // Builds the bid-requirement picture out of rows already fetched from the Worker. Shared by
 // Load Project (which does it automatically) and the manual re-pull button on tab 3, so there
 // is exactly one definition of "what the bid requires" and no way for the two to drift apart.
@@ -1960,27 +1982,60 @@ function buildBidReqFrom(latestByPhase){
   const kickoff = latestByPhase.kickoff_sheet ? JSON.parse(latestByPhase.kickoff_sheet.data) : null;
   const pool = [].concat((spec&&spec.items)||[], (dwg&&dwg.items)||[]);
   if(!pool.length && !kickoff) return null;
-  const findings = pool
-    .filter(it=>MATERIAL_RX.test([it.requirement,it.detail,it.topic,it.item].filter(Boolean).join(' ')))
-    .map(it=>({ requirement: it.requirement || it.item || '', detail: it.detail || '', topic: it.topic || '',
-                source: it.source || it.reference || '', bucket: it.category || it.bucket || '' }));
-  // From the kickoff sheet, only the parts that can plausibly imply material or scope. A
-  // submission deadline is not something a takeoff can cover; a hidden-scope flag is.
+
+  // Re-running the Bid Requirements Reader on a job writes fresh batch rows alongside the old
+  // ones, and addenda repeat whole sections verbatim, so the same requirement can arrive many
+  // times over. Deduping before filtering is what stops the coverage pass doing the same work
+  // ten times and charging for it ten times.
+  const seen = new Set();
+  let dupes = 0;
+  const unique = [];
+  pool.forEach(it=>{
+    const k = reqKey([it.requirement, it.item].filter(Boolean).join(' ') + '|' + (it.detail||''));
+    if(!k) return;
+    if(seen.has(k)){ dupes++; return; }
+    seen.add(k);
+    unique.push(it);
+  });
+
+  const kept = [], dropped = [];
+  unique.forEach(it=>{
+    const text = [it.requirement, it.item, it.detail, it.topic].filter(Boolean).join(' ');
+    const row = { requirement: it.requirement || it.item || '', detail: it.detail || '', topic: it.topic || '',
+                  source: it.source || it.reference || '', bucket: it.category || it.bucket || '' };
+    if(isMaterialRequirement(text)) kept.push(row); else dropped.push(row);
+  });
+
   const kickoffPoints = [];
   if(kickoff){
-    (kickoff.top_risks||[]).forEach(r=>{ if(MATERIAL_RX.test([r.topic,r.description].join(' '))) kickoffPoints.push({ kind:'risk', label:r.topic||'', detail:r.description||'', source:r.source||'Kickoff Sheet' }); });
     // Conflicts and open items have no short title of their own on the kickoff sheet, so the
-    // first clause of the description becomes the label. "Document conflict" as a heading tells
-    // an estimator nothing; the actual conflict does.
+    // first clause of the description becomes the label. "Document conflict" as a heading
+    // tells an estimator nothing; the actual conflict does.
     const short = t=>{ t = String(t||'').trim(); return t.length>90 ? t.slice(0,88).replace(/\s+\S*$/,'')+'…' : t; };
-    (kickoff.conflicts||[]).forEach(c=>{ if(MATERIAL_RX.test(c.description||'')) kickoffPoints.push({ kind:'conflict', label:short(c.description)||'Document conflict', detail:c.description||'', source:'Conflict · '+(c.sources||'Kickoff Sheet') }); });
-    (kickoff.open_items||[]).forEach(oi=>{ if(MATERIAL_RX.test([oi.description,oi.why].join(' '))) kickoffPoints.push({ kind:'open item', label:short(oi.description)||'Open item', detail:oi.why||'', source:'Open item · Kickoff Sheet' }); });
+    (kickoff.top_risks||[]).forEach(r=>{ if(isMaterialRequirement([r.topic,r.description].join(' '))) kickoffPoints.push({ kind:'risk', label:r.topic||short(r.description), detail:r.description||'', source:r.source||'Kickoff Sheet' }); });
+    (kickoff.conflicts||[]).forEach(c=>{ if(isMaterialRequirement(c.description||'')) kickoffPoints.push({ kind:'conflict', label:short(c.description)||'Document conflict', detail:c.description||'', source:'Conflict · '+(c.sources||'Kickoff Sheet') }); });
+    (kickoff.open_items||[]).forEach(oi=>{ if(isMaterialRequirement([oi.description,oi.why].join(' '))) kickoffPoints.push({ kind:'open item', label:short(oi.description)||'Open item', detail:oi.why||'', source:'Open item · Kickoff Sheet' }); });
   }
-  return { findings, kickoff_points: kickoffPoints,
+  return { findings: kept, kickoff_points: kickoffPoints,
     kickoff_meta: kickoff ? { verdict:(kickoff.recommendation||{}).verdict||'', bid_due:kickoff.bid_due||'', scores:kickoff.scores||null } : null,
-    at:new Date().toISOString(), _pool: pool.length, _had_kickoff: !!kickoff,
+    at:new Date().toISOString(),
+    _pool: pool.length, _dupes: dupes, _unique: unique.length, _dropped: dropped.length,
+    _dropped_sample: dropped.slice(0, 80).map(d=>d.requirement).filter(Boolean),
+    _had_kickoff: !!kickoff,
     _kickoff_total: kickoff ? ((kickoff.top_risks||[]).length+(kickoff.conflicts||[]).length+(kickoff.open_items||[]).length) : 0 };
 }
+// One sentence of arithmetic the estimator can check: what came out of the database, what was
+// a repeat, what was thrown away as non-material, and what is left to actually check.
+function bidReqAccountingText(r){
+  if(!r) return '';
+  const parts = [];
+  parts.push(r._pool+' finding'+(r._pool===1?'':'s')+' in the database for this job');
+  if(r._dupes) parts.push(r._dupes+' repeat'+(r._dupes===1?'':'s')+' dropped');
+  if(r._dropped) parts.push(r._dropped+' not about material');
+  parts.push((r.findings||[]).length+' kept to check the takeoff against');
+  return parts.join(', ')+'.'+(r._had_kickoff ? (' Plus '+(r.kickoff_points||[]).length+' point'+((r.kickoff_points||[]).length===1?'':'s')+' off the kickoff sheet.') : '');
+}
+
 async function pullFromPhase1(btn){
   const msg = document.getElementById('pullMsg');
   msg.style.color = '';
@@ -1992,8 +2047,7 @@ async function pullFromPhase1(btn){
     bidReq = built;
     renderReqOut();
     saveToCloud('p2_bid_requirements', bidReq);
-    msg.textContent = 'Re-pulled '+built.findings.length+' material-related findings out of '+built._pool+
-      (built._had_kickoff ? (', plus '+built.kickoff_points.length+' point'+(built.kickoff_points.length===1?'':'s')+' off the kickoff sheet.') : '. No kickoff sheet saved for this project yet.');
+    msg.textContent = 'Re-pulled. '+bidReqAccountingText(built);
     updateCounts();
   }catch(e){
     msg.textContent = e.message; msg.style.color = '#B4451F';
@@ -2005,10 +2059,21 @@ function renderReqOut(){
   const out = document.getElementById('reqOut');
   if(!bidReq){ out.innerHTML=''; return; }
   const f = bidReq.findings||[], k = bidReq.kickoff_points||[];
-  out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+f.length+' material-related bid requirement'+(f.length===1?'':'s')+'</b> and <b>'+k.length+' kickoff point'+(k.length===1?'':'s')+'</b> loaded. '+
-      'These are what the bid documents and the kickoff call for. The comparison will check the takeoff for anything here it has no line against.'+
+  const heavy = (f.length+k.length) > 200;
+  out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+f.length+' material bid requirement'+(f.length===1?'':'s')+'</b> and <b>'+k.length+' kickoff point'+(k.length===1?'':'s')+'</b> loaded. '+
+      'The comparison will check the takeoff for anything here it has no line against.'+
       (bidReq.kickoff_meta&&bidReq.kickoff_meta.verdict ? ' Kickoff verdict on this job was <b>'+esc(bidReq.kickoff_meta.verdict)+'</b>.' : '')+'</div>'+
-    '<div style="margin-top:6px"><button class="btnsm" onclick="toggleLines(this,\'req\')" type="button">Show the '+(f.length+k.length)+' item'+((f.length+k.length)===1?'':'s')+'</button></div>'+
+    '<div class="note info" style="margin-top:0"><b>Where that number comes from:</b> '+esc(bidReqAccountingText(bidReq))+
+      ' Nothing was thrown away quietly, and the discarded ones are listed below so you can check the filter is not eating something real.</div>'+
+    (heavy ? '<div class="note warn" style="margin-top:0"><b>That is still a lot to check.</b> '+(f.length+k.length)+' requirements is roughly '+Math.ceil((f.length+k.length)/25)+' passes on the coverage check, so it will take a while and cost accordingly. If most of what is listed below is not really material, tell me and I will tighten the filter further.</div>' : '')+
+    '<div style="margin-top:6px"><button class="btnsm" onclick="toggleLines(this,\'req\')" type="button">Show the '+(f.length+k.length)+' item'+((f.length+k.length)===1?'':'s')+'</button>'+
+      ((bidReq._dropped||0) ? ' <button class="btnsm" onclick="toggleLines(this,\'reqdrop\')" type="button">Show what was left out ('+bidReq._dropped+')</button>' : '')+'</div>'+
+    ((bidReq._dropped||0) ? '<div id="suplines-reqdrop" style="display:none;margin-top:12px">'+
+      '<div class="note info" style="margin:0 0 10px">These were read as not being about material, so the takeoff is not checked against them. Submittals, bonding, insurance, warranty terms and execution requirements all land here and that is correct. If you spot something in this list that a takeoff really should carry a line for, say so and the filter gets fixed.'+
+      ((bidReq._dropped > (bidReq._dropped_sample||[]).length) ? ' Showing the first '+(bidReq._dropped_sample||[]).length+' of '+bidReq._dropped+'.' : '')+'</div>'+
+      '<div class="tablewrap"><table class="matrix"><tbody>'+
+      (bidReq._dropped_sample||[]).map(d=>'<tr><td class="supcell">'+esc(d)+'</td></tr>').join('')+
+      '</tbody></table></div></div>' : '')+
     '<div id="suplines-req" style="display:none;margin-top:12px"><div class="tablewrap"><table class="matrix"><thead><tr>'+
       '<th style="width:110px">From</th><th>What the bid requires</th><th style="width:150px">Source</th></tr></thead><tbody>'+
       f.map(x=>'<tr><td><span class="catchip">bid docs</span></td><td><div class="itemdesc">'+esc(x.requirement)+'</div>'+
@@ -2066,11 +2131,25 @@ function renderReadiness(){
                           : 'No supplier quotes read yet, so only the coverage check will run.');
     bits.push(reqCount ? ('<b>'+reqCount+' bid requirement'+(reqCount===1?'':'s')+' loaded,</b> so the takeoff itself gets checked for gaps.')
                        : 'Nothing pulled from the Bid Requirements Reader, so the takeoff will not be checked for gaps. That is the check that catches scope nobody quoted because nobody asked for it.');
+    const catCount = countCategoriesToRun();
+    const covPasses = Math.ceil(reqCount/25);
+    bits.push('<b>This run will make '+((read.length?catCount:0)+covPasses)+' pass'+(((read.length?catCount:0)+covPasses)===1?'':'es')+':</b> '+
+      (read.length ? (catCount+' for the quotes, one per material category, and ') : '')+covPasses+' for the coverage check.');
     html += '<div class="note info">'+bits.join('<br>')+'</div>';
+    if(covPasses > 12) html += '<div class="note warn"><b>The coverage check alone is '+covPasses+' passes.</b> That is a long run and it costs real money. It is worth looking at tab 3 first and confirming those requirements are actually material items before you set it going.</div>';
     if(read.length===1) html += '<div class="note warn">Only one quote is loaded. It still gets checked line by line against the takeoff, but there is nothing to compare it against supplier to supplier.</div>';
   }
   el.innerHTML = html;
   document.getElementById('cmpBtn').disabled = !takeoffData;
+}
+// Same category union the run itself builds, computed up front so the readiness note can say
+// honestly how many passes this is about to make rather than surprising anyone with the bill.
+function countCategoriesToRun(){
+  const seen = new Set();
+  ((takeoffData&&takeoffData.items)||[]).forEach(it=>seen.add(catOf(it)));
+  suppliers.filter(s=>s.data).forEach(s=>(s.data.items||[]).forEach(it=>seen.add(catOf(it))));
+  ((specBasis&&specBasis.items)||[]).forEach(it=>seen.add(catOf(it)));
+  return seen.size;
 }
 function stopCompare(){ if(cmpAbort) cmpAbort.abort(); }
 function setCmpRunning(on){
@@ -2139,6 +2218,15 @@ async function runCompare(){
       ((specBasis&&specBasis.items)||[]).map(i=>({ requirement:[i.tag,i.description].filter(Boolean).join(' '), detail:[[i.basis_of_design_manufacturer,i.model].filter(Boolean).join(' '), (i.requirements||[]).join('; ')].filter(Boolean).join(' · '), from:'schedule', source:i.source||'' })),
       ((bidReq&&bidReq.kickoff_points)||[]).map(k=>({ requirement:k.label, detail:k.detail, from:'kickoff', source:k.source||'Kickoff Sheet' }))
     ).filter(r=>r.requirement);
+    if(reqs.length){
+      // Real friction before a long, expensive run. 25 requirements a pass adds up fast on a
+      // big spec, and finding that out from the bill afterwards is not acceptable.
+      const passes = Math.ceil(reqs.length/25);
+      if(passes > 25 && !confirm('The coverage check is '+reqs.length+' requirements, which is '+passes+' separate passes. That is a long run and it costs accordingly.\n\nWorth checking tab 3 first to see whether those are really all material items.\n\nRun the coverage check anyway?')){
+        all._run.failed.push({ category:'coverage check', error:'skipped by you before it ran: '+reqs.length+' requirements, '+passes+' passes', lane:'coverage' });
+        reqs.length = 0;
+      }
+    }
     if(reqs.length){
       // The whole takeoff rides along with every batch: a requirement can be covered by a line
       // in any category, so slicing the takeoff by category here would invent false gaps.
