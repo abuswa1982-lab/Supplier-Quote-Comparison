@@ -113,6 +113,37 @@
   .collapsible-head.open .chev{transform:rotate(180deg)}
   .collapsible-summary{font-size:12.5px;color:var(--muted);margin-left:auto;font-weight:500}
   .collapsible-body{margin-top:14px}
+  .projbar{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--card);
+    border:1px solid var(--line);border-left:4px solid var(--navy);border-radius:6px;
+    padding:13px 16px;margin-bottom:14px;
+  }
+  .projbar .pb-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .projbar input{flex:1;min-width:220px;max-width:420px;margin:0}
+  .projbar .pb-picker{position:relative;flex:1;min-width:220px;max-width:420px;display:flex}
+  .projbar .pb-picker input{flex:1;min-width:0;max-width:none;border-top-right-radius:0;border-bottom-right-radius:0;border-right:0}
+  .projbar .pb-caret{
+    font-family:var(--body);font-size:13px;font-weight:600;background:var(--card);color:var(--navy);
+    border:1px solid var(--line-strong);border-radius:0 4px 4px 0;padding:0 12px;cursor:pointer;flex:none;
+  }
+  .projbar .pb-caret:hover{background:var(--blue-tint);border-color:var(--blue)}
+  .pb-menu{
+    display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:60;background:var(--card);
+    border:1px solid var(--line-strong);border-radius:5px;box-shadow:0 8px 24px rgba(12,68,124,.16);
+    max-height:320px;overflow-y:auto;
+  }
+  .pb-menu.open{display:block}
+  .pb-menu .pb-head{
+    font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+    padding:9px 13px 6px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);
+  }
+  .pb-menu .pb-item{padding:9px 13px;font-size:13.5px;cursor:pointer;border-bottom:1px solid #EDF1F4;line-height:1.35}
+  .pb-menu .pb-item:last-child{border-bottom:0}
+  .pb-menu .pb-item:hover{background:var(--blue-tint)}
+  .pb-menu .pb-item.cur{background:var(--green-tint);font-weight:600;color:#215A3B}
+  .pb-menu .pb-empty{padding:12px 13px;font-size:12.5px;color:var(--muted);line-height:1.45}
+  .projbar .pb-status{font-size:12.5px;color:var(--muted);flex:1 1 100%;line-height:1.45}
+  .projbar .pb-status.warn{color:var(--rust)}
   .setup-wrap{background:var(--blue-tint);border:1px solid #CBDDEE;border-radius:6px;padding:16px 20px;margin-bottom:18px}
   .setup-wrap .card{background:var(--card)}
   .setup-wrap .collapsible-head h2{color:var(--blue);text-transform:none;font-size:15px;letter-spacing:0}
@@ -289,6 +320,16 @@
 </header>
 
 <div class="wrap">
+  <div class="projbar">
+    <span class="pb-label">Project</span>
+    <div class="pb-picker">
+      <input type="text" id="projBarName" list="projectSuggestions" placeholder="pick a job, or type a new one" spellcheck="false" autocomplete="off">
+      <button class="pb-caret" id="projBarCaret" onclick="toggleProjectMenu(event)" type="button" title="Show every job saved on the Worker, from either tool">&#9662;</button>
+      <div class="pb-menu" id="projBarMenu"></div>
+    </div>
+    <button class="btn2 primary" id="projBarLoad" onclick="loadCloudProject(this)" type="button">Load Project</button>
+    <span class="pb-status" id="projBarStatus">Type the job name and load it. Everything the Bid Requirements Reader already found for that job comes across with it.</span>
+  </div>
   <div class="setup-wrap">
     <div class="collapsible-head" onclick="toggleCollapse(this)">
       <i class="chev">&#9662;</i>
@@ -408,7 +449,7 @@
   <!-- ======================= TAB 3: BID REQUIREMENTS ======================= -->
   <div id="page-bidreq" style="display:none">
     <div class="note info">
-      <b>This is what the bid documents require, not what you asked for.</b> You are not making changes here: it is a read of what the project itself demands, so the takeoff can be checked for anything the bid calls for and the takeoff missed. Most of it has already been read and stored by the Bid Requirements Reader, so it is a button, not an upload.
+      <b>This is what the bid documents require, not what you asked for.</b> You are not making changes here: it is a read of what the project itself demands, so the takeoff can be checked for anything the bid calls for and the takeoff missed. It was already read and stored by the Bid Requirements Reader, so it arrives on its own when you load the project. Nothing to upload and nothing to re-read.
     </div>
     <div class="card">
       <div class="collapsible-head open" onclick="toggleCollapse(this)">
@@ -417,9 +458,9 @@
         <span class="collapsible-summary" id="reqSummary">nothing loaded</span>
       </div>
       <div class="collapsible-body" style="display:block">
-        <p class="hint" style="margin:0 0 12px">Uses the project name in Setup above. It has to match what was typed over there, exactly. This brings across the material-related spec findings and, separately, the kickoff sheet.</p>
+        <p class="hint" style="margin:0 0 12px">This comes across on its own when you load the project at the top of the page, so there is normally nothing to do here. The button is only for when you have run the Bid Requirements Reader again since and want the newer findings.</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <button class="btn2 primary" onclick="pullFromPhase1(this)" type="button">Pull spec findings and kickoff sheet</button>
+          <button class="btn2" onclick="pullFromPhase1(this)" type="button">Re-pull from the Bid Requirements Reader</button>
           <span class="hint" style="margin:0" id="pullMsg"></span>
         </div>
         <div id="reqOut"></div>
@@ -603,7 +644,26 @@ document.getElementById('cloudWorkerUrl').addEventListener('input', function(){
 });
 document.getElementById('cloudProject').addEventListener('input', function(){
   try{ localStorage.setItem('modonix_last_project', this.value.trim()); }catch(e){ /* ignore */ }
+  document.getElementById('projBarName').value = this.value;
 });
+// The project name lives in two places on screen: the bar at the top, where it is always
+// visible, and inside Setup, which is collapsed by default. They are the same field.
+(function initProjectBar(){
+  const bar = document.getElementById('projBarName');
+  bar.value = document.getElementById('cloudProject').value;
+  bar.addEventListener('input', function(){
+    document.getElementById('cloudProject').value = this.value;
+    try{ localStorage.setItem('modonix_last_project', this.value.trim()); }catch(e){ /* ignore */ }
+    renderProjectMenu();
+  });
+  bar.addEventListener('focus', function(){ if(!this.value.trim()) toggleProjectMenu(); });
+  bar.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ closeProjectMenu(); loadCloudProject(document.getElementById('projBarLoad')); } });
+})();
+function setProjectBar(msg, isWarn){
+  const el = document.getElementById('projBarStatus');
+  el.textContent = msg;
+  el.classList.toggle('warn', !!isWarn);
+}
 function getKey(){ return document.getElementById('key').value.trim(); }
 function workerUrl(){ return document.getElementById('cloudWorkerUrl').value.trim().replace(/\/+$/,''); }
 function projectName(){ return document.getElementById('cloudProject').value.trim(); }
@@ -679,6 +739,7 @@ async function saveToCloud(phase, data){
     return false;
   }
 }
+let knownProjects = [];
 async function refreshProjectSuggestions(){
   const url = workerUrl();
   if(!url) return;
@@ -686,14 +747,57 @@ async function refreshProjectSuggestions(){
     const res = await fetch(url + '/projects');
     if(!res.ok) return;
     const body = await res.json();
-    const names = (body.results||[]).map(r=>r.project_name).filter(Boolean);
+    knownProjects = (body.results||[]).map(r=>r.project_name).filter(Boolean)
+      .filter((n,i,a)=>a.indexOf(n)===i)
+      .sort((a,b)=>a.localeCompare(b, undefined, {sensitivity:'base'}));
     const list = document.getElementById('projectSuggestions');
     list.innerHTML = '';
-    names.forEach(name=>{ const o=document.createElement('option'); o.value=name; list.appendChild(o); });
+    knownProjects.forEach(name=>{ const o=document.createElement('option'); o.value=name; list.appendChild(o); });
     const h = document.getElementById('projectSuggestHint');
-    h.textContent = names.length ? ('Start typing to see suggestions from '+names.length+' saved project'+(names.length===1?'':'s')+'. Projects from the Bid Requirements Reader show up here too.') : '';
-  }catch(e){ /* suggestions are a convenience, never a hard failure */ }
+    h.textContent = knownProjects.length ? (knownProjects.length+' saved project'+(knownProjects.length===1?'':'s')+' on this Worker. Jobs from the Bid Requirements Reader show up here too, since both tools save to the same place.') : '';
+    renderProjectMenu();
+  }catch(e){ /* the list is a convenience, never a hard failure: typing the name always works */ }
 }
+// A real dropdown, not just type-ahead. A datalist only appears once you have typed a
+// character, which is no use when the whole point is that you cannot remember exactly how the
+// job was spelled in the other tool.
+function renderProjectMenu(){
+  const menu = document.getElementById('projBarMenu');
+  if(!menu) return;
+  const cur = projectName().trim().toLowerCase();
+  menu.innerHTML = knownProjects.length
+    ? '<div class="pb-head">'+knownProjects.length+' saved job'+(knownProjects.length===1?'':'s')+' on this Worker</div>'+
+      knownProjects.map(n=>'<div class="pb-item'+(n.trim().toLowerCase()===cur?' cur':'')+'" data-name="'+esc(n)+'">'+esc(n)+'</div>').join('')
+    : '<div class="pb-empty">No saved jobs found on the Worker yet. Type a name to start one. If you expected jobs here, check the Worker URL in Setup.</div>';
+  menu.querySelectorAll('.pb-item').forEach(el=>{
+    el.onclick = ()=>{
+      setProjectNameEverywhere(el.dataset.name);
+      closeProjectMenu();
+      loadCloudProject(document.getElementById('projBarLoad'));
+    };
+  });
+}
+function setProjectNameEverywhere(name){
+  document.getElementById('projBarName').value = name;
+  document.getElementById('cloudProject').value = name;
+  try{ localStorage.setItem('modonix_last_project', name.trim()); }catch(e){ /* ignore */ }
+}
+function closeProjectMenu(){ document.getElementById('projBarMenu').classList.remove('open'); }
+function toggleProjectMenu(e){
+  if(e) e.stopPropagation();
+  const menu = document.getElementById('projBarMenu');
+  const opening = !menu.classList.contains('open');
+  if(opening){
+    renderProjectMenu();
+    if(!knownProjects.length) refreshProjectSuggestions();
+  }
+  menu.classList.toggle('open', opening);
+}
+document.addEventListener('click', function(e){
+  const picker = document.querySelector('.pb-picker');
+  if(picker && !picker.contains(e.target)) closeProjectMenu();
+});
+document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeProjectMenu(); });
 refreshProjectSuggestions();
 
 // Pulls every row for the project and hands back {latestByPhase, rows}. Rows come back
@@ -702,8 +806,15 @@ async function fetchProjectRows(){
   const url = workerUrl(), project = projectName();
   if(!url) throw new Error('Enter the Worker URL in Setup first.');
   if(!project) throw new Error('Enter the project name in Setup first.');
-  const res = await fetch(url + '/load?project=' + encodeURIComponent(project));
-  if(!res.ok) throw new Error('The Worker answered with status '+res.status+'.');
+  let res;
+  try{
+    res = await fetch(url + '/load?project=' + encodeURIComponent(project));
+  }catch(e){
+    // "Failed to fetch" on its own tells nobody anything. This is nearly always a VPN, an
+    // offline laptop, or a wrong Worker URL, so say that instead.
+    throw new Error('Could not reach the Worker at '+url+'. Nothing was loaded. This is usually a VPN or a restrictive network blocking it, no connection at all, or a Worker URL that has been changed in Setup.');
+  }
+  if(!res.ok) throw new Error('The Worker answered with status '+res.status+' when asked for "'+project+'". Nothing was loaded.');
   const body = await res.json();
   const rows = body.results || [];
   const latestByPhase = {};
@@ -753,24 +864,44 @@ async function loadCloudProject(btn){
       takeoffData = JSON.parse(latestByPhase.p2_takeoff.data);
       renderToOut(); loaded.push('takeoff v'+(takeoffData.version||1));
     }
-    if(latestByPhase.p2_bid_requirements){
-      bidReq = JSON.parse(latestByPhase.p2_bid_requirements.data);
-      renderReqOut(); loaded.push('bid requirements');
+    // The bid requirements come across automatically. They were already read and paid for by
+    // the Bid Requirements Reader on this same project, so making someone press a second
+    // button to fetch rows this call already has in hand is just a way to lose them.
+    const stored = latestByPhase.p2_bid_requirements ? JSON.parse(latestByPhase.p2_bid_requirements.data) : null;
+    const fresh = buildBidReqFrom(latestByPhase);
+    if(fresh){
+      bidReq = fresh;
+      renderReqOut();
+      loaded.push(fresh.findings.length+' bid requirement'+(fresh.findings.length===1?'':'s')+(fresh._had_kickoff?' and the kickoff sheet':''));
+      // Only write it back if nothing was stored yet, or the Bid Requirements Reader has moved
+      // on since. No point burning a save on every single load.
+      if(!stored || (stored.findings||[]).length !== fresh.findings.length || (stored.kickoff_points||[]).length !== fresh.kickoff_points.length){
+        saveToCloud('p2_bid_requirements', bidReq);
+      }
+    } else if(stored){
+      bidReq = stored; renderReqOut(); loaded.push('bid requirements');
     }
     if(latestByPhase.p2_comparison){
       cmpData = JSON.parse(latestByPhase.p2_comparison.data);
       renderCompare(); renderExceptions(); loaded.push('comparison');
     }
-    // Flag that there is Bid Requirements Reader data sitting here waiting to be pulled.
-    const p1 = reconstructFromItemRows(latestByPhase, 'spec_extraction');
     const msgEl = document.getElementById('pullMsg');
-    if(msgEl && p1 && (p1.items||[]).length && !bidReq){
-      msgEl.textContent = 'Bid Requirements Reader data found for this project ('+p1.items.length+' findings)'+(latestByPhase.kickoff_sheet?' plus a kickoff sheet':'')+'. Click the button to pull it in.';
-    }
+    if(msgEl) msgEl.textContent = bidReq
+      ? ('Came across automatically when the project loaded: '+(bidReq.findings||[]).length+' material-related findings out of '+(bidReq._pool||0)+(bidReq._had_kickoff?', plus the kickoff sheet':'')+'. Only press this if you have run the Bid Requirements Reader again since.')
+      : 'Nothing from the Bid Requirements Reader is saved under this project name yet.';
     updateCounts();
-    cloudStatus(loaded.length ? ('Loaded: '+loaded.join(', ')+'.') : 'No Phase 2 data saved for this project yet. That is normal for a new job.');
+    // Say what actually happened. "Nothing here" when the bid data is plainly sitting in the
+    // same database is the kind of message that makes someone stop trusting the tool.
+    const haveP2 = !!(takeoffData || suppliers.some(x=>x.data) || cmpData);
+    let statusMsg;
+    if(loaded.length && haveP2) statusMsg = 'Loaded: '+loaded.join(', ')+'.';
+    else if(loaded.length) statusMsg = 'Loaded '+loaded.join(', ')+' from the Bid Requirements Reader. No Phase 2 work saved on this job yet, so start with the takeoff on tab 1.';
+    else statusMsg = 'Nothing saved under "'+projectName()+'" from either tool. If this job has been through the Bid Requirements Reader, check the project name matches exactly what was typed over there.';
+    cloudStatus(statusMsg);
+    setProjectBar(statusMsg, !loaded.length);
   }catch(e){
     cloudStatus(e.message, true);
+    setProjectBar(e.message, true);
   }finally{
     btn.disabled = false; btn.textContent = o;
   }
@@ -1820,36 +1951,49 @@ function downloadTakeoffExcel(btn){
 
 /* --------------------------- bid requirements --------------------------- */
 const MATERIAL_RX = /(fixture|water closet|\bwc\b|lavatory|urinal|sink|faucet|carrier|floor drain|roof drain|cleanout|trap|interceptor|shower|tub|water heater|heater|pump|boiler|backflow|hydrant|valve|copper|pvc|cpvc|pex|cast iron|\bpipe\b|fitting|insulat|hanger|support|sleeve|escutcheon|hose bibb|mixing valve|expansion|specialt|equipment|manufactur|model|approved equal|or equal|basis of design|substitut|product|schedule|furnish|provide|material)/i;
+// Builds the bid-requirement picture out of rows already fetched from the Worker. Shared by
+// Load Project (which does it automatically) and the manual re-pull button on tab 3, so there
+// is exactly one definition of "what the bid requires" and no way for the two to drift apart.
+function buildBidReqFrom(latestByPhase){
+  const spec = reconstructFromItemRows(latestByPhase, 'spec_extraction');
+  const dwg  = reconstructFromItemRows(latestByPhase, 'drawing_extraction');
+  const kickoff = latestByPhase.kickoff_sheet ? JSON.parse(latestByPhase.kickoff_sheet.data) : null;
+  const pool = [].concat((spec&&spec.items)||[], (dwg&&dwg.items)||[]);
+  if(!pool.length && !kickoff) return null;
+  const findings = pool
+    .filter(it=>MATERIAL_RX.test([it.requirement,it.detail,it.topic,it.item].filter(Boolean).join(' ')))
+    .map(it=>({ requirement: it.requirement || it.item || '', detail: it.detail || '', topic: it.topic || '',
+                source: it.source || it.reference || '', bucket: it.category || it.bucket || '' }));
+  // From the kickoff sheet, only the parts that can plausibly imply material or scope. A
+  // submission deadline is not something a takeoff can cover; a hidden-scope flag is.
+  const kickoffPoints = [];
+  if(kickoff){
+    (kickoff.top_risks||[]).forEach(r=>{ if(MATERIAL_RX.test([r.topic,r.description].join(' '))) kickoffPoints.push({ kind:'risk', label:r.topic||'', detail:r.description||'', source:r.source||'Kickoff Sheet' }); });
+    // Conflicts and open items have no short title of their own on the kickoff sheet, so the
+    // first clause of the description becomes the label. "Document conflict" as a heading tells
+    // an estimator nothing; the actual conflict does.
+    const short = t=>{ t = String(t||'').trim(); return t.length>90 ? t.slice(0,88).replace(/\s+\S*$/,'')+'…' : t; };
+    (kickoff.conflicts||[]).forEach(c=>{ if(MATERIAL_RX.test(c.description||'')) kickoffPoints.push({ kind:'conflict', label:short(c.description)||'Document conflict', detail:c.description||'', source:'Conflict · '+(c.sources||'Kickoff Sheet') }); });
+    (kickoff.open_items||[]).forEach(oi=>{ if(MATERIAL_RX.test([oi.description,oi.why].join(' '))) kickoffPoints.push({ kind:'open item', label:short(oi.description)||'Open item', detail:oi.why||'', source:'Open item · Kickoff Sheet' }); });
+  }
+  return { findings, kickoff_points: kickoffPoints,
+    kickoff_meta: kickoff ? { verdict:(kickoff.recommendation||{}).verdict||'', bid_due:kickoff.bid_due||'', scores:kickoff.scores||null } : null,
+    at:new Date().toISOString(), _pool: pool.length, _had_kickoff: !!kickoff,
+    _kickoff_total: kickoff ? ((kickoff.top_risks||[]).length+(kickoff.conflicts||[]).length+(kickoff.open_items||[]).length) : 0 };
+}
 async function pullFromPhase1(btn){
   const msg = document.getElementById('pullMsg');
   msg.style.color = '';
   const o = btn.textContent; btn.disabled = true; btn.textContent = 'Pulling…';
   try{
     const { latestByPhase } = await fetchProjectRows();
-    const spec = reconstructFromItemRows(latestByPhase, 'spec_extraction');
-    const dwg  = reconstructFromItemRows(latestByPhase, 'drawing_extraction');
-    const kickoff = latestByPhase.kickoff_sheet ? JSON.parse(latestByPhase.kickoff_sheet.data) : null;
-    const pool = [].concat((spec&&spec.items)||[], (dwg&&dwg.items)||[]);
-    if(!pool.length && !kickoff) throw new Error('Nothing saved under "'+projectName()+'" from the Bid Requirements Reader. Check the project name matches exactly what was typed over there.');
-    const findings = pool
-      .filter(it=>MATERIAL_RX.test([it.requirement,it.detail,it.topic,it.item].filter(Boolean).join(' ')))
-      .map(it=>({ requirement: it.requirement || it.item || '', detail: it.detail || '', topic: it.topic || '',
-                  source: it.source || it.reference || '', bucket: it.category || it.bucket || '' }));
-    // From the kickoff sheet, only the parts that can plausibly imply material or scope. A
-    // submission deadline is not something a takeoff can cover; a hidden-scope flag is.
-    const kickoffPoints = [];
-    if(kickoff){
-      (kickoff.top_risks||[]).forEach(r=>{ if(MATERIAL_RX.test([r.topic,r.description].join(' '))) kickoffPoints.push({ kind:'risk', label:r.topic||'', detail:r.description||'', source:r.source||'Kickoff Sheet' }); });
-      (kickoff.conflicts||[]).forEach(c=>{ if(MATERIAL_RX.test(c.description||'')) kickoffPoints.push({ kind:'conflict', label:'Document conflict', detail:c.description||'', source:c.sources||'Kickoff Sheet' }); });
-      (kickoff.open_items||[]).forEach(oi=>{ if(MATERIAL_RX.test([oi.description,oi.why].join(' '))) kickoffPoints.push({ kind:'open item', label:'Open item', detail:oi.description||'', source:oi.why||'Kickoff Sheet' }); });
-    }
-    bidReq = { findings, kickoff_points: kickoffPoints,
-      kickoff_meta: kickoff ? { verdict:(kickoff.recommendation||{}).verdict||'', bid_due:kickoff.bid_due||'', scores:kickoff.scores||null } : null,
-      at:new Date().toISOString(), _pool: pool.length, _kickoff_total: kickoff ? ((kickoff.top_risks||[]).length+(kickoff.conflicts||[]).length+(kickoff.open_items||[]).length) : 0 };
+    const built = buildBidReqFrom(latestByPhase);
+    if(!built) throw new Error('Nothing saved under "'+projectName()+'" from the Bid Requirements Reader. Check the project name matches exactly what was typed over there.');
+    bidReq = built;
     renderReqOut();
     saveToCloud('p2_bid_requirements', bidReq);
-    msg.textContent = 'Pulled '+findings.length+' material-related findings out of '+pool.length+
-      (kickoff ? (', plus '+kickoffPoints.length+' point'+(kickoffPoints.length===1?'':'s')+' off the kickoff sheet.') : '. No kickoff sheet saved for this project yet.');
+    msg.textContent = 'Re-pulled '+built.findings.length+' material-related findings out of '+built._pool+
+      (built._had_kickoff ? (', plus '+built.kickoff_points.length+' point'+(built.kickoff_points.length===1?'':'s')+' off the kickoff sheet.') : '. No kickoff sheet saved for this project yet.');
     updateCounts();
   }catch(e){
     msg.textContent = e.message; msg.style.color = '#B4451F';
@@ -1869,8 +2013,13 @@ function renderReqOut(){
       '<th style="width:110px">From</th><th>What the bid requires</th><th style="width:150px">Source</th></tr></thead><tbody>'+
       f.map(x=>'<tr><td><span class="catchip">bid docs</span></td><td><div class="itemdesc">'+esc(x.requirement)+'</div>'+
         (x.detail?'<div class="itemsub">'+esc(x.detail)+'</div>':'')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>').join('')+
-      k.map(x=>'<tr><td><span class="catchip">kickoff</span></td><td><div class="itemdesc">'+esc(x.label)+'</div>'+
-        (x.detail?'<div class="itemsub">'+esc(x.detail)+'</div>':'')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>').join('')+
+      k.map(x=>{
+        // The label is often a trimmed version of the detail, so only show the detail when it
+        // actually adds something rather than repeating the line above it.
+        const dup = x.detail && (x.detail === x.label || x.detail.indexOf(x.label.replace(/…$/,''))===0);
+        return '<tr><td><span class="catchip">kickoff</span></td><td><div class="itemdesc">'+esc(x.label)+'</div>'+
+          (x.detail && !dup ? '<div class="itemsub">'+esc(x.detail)+'</div>' : '')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>';
+      }).join('')+
     '</tbody></table></div></div>';
 }
 function renderSpecOut(){
@@ -2488,6 +2637,7 @@ function clearProject(btn){
   document.getElementById('toVersions').innerHTML = '';
   document.getElementById('reqOut').innerHTML = '';
   document.getElementById('pullMsg').textContent = '';
+  setProjectBar('Cleared. The project name is still set, so Load Project will bring this job back.');
   document.getElementById('cmpProg').textContent = '';
   document.getElementById('cmpErr').innerHTML = '';
   document.getElementById('cmpResults').style.display = 'none';
@@ -2506,6 +2656,14 @@ setToMode('file');
 renderToOut();
 renderReqOut();
 updateCounts();
+// Reopen whatever job was last open, without being asked. Reading the project back is a single
+// cheap GET against the Worker and costs nothing with Anthropic, and coming back to a half
+// empty screen you then have to go and re-populate by hand is its own kind of error.
+(function autoLoadLastProject(){
+  if(!projectName() || !workerUrl()) return;
+  setProjectBar('Reopening "'+projectName()+'"…');
+  loadCloudProject(document.getElementById('projBarLoad'));
+})();
 </script>
 </body>
 </html>
