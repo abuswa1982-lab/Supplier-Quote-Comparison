@@ -460,6 +460,7 @@
       <div class="collapsible-body" style="display:block">
         <p class="hint" style="margin:0 0 12px">This comes across on its own when you load the project at the top of the page, so there is normally nothing to do here. The button is only for when you have run the Bid Requirements Reader again since and want the newer findings.</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <button class="btn2 primary" id="narrowBtn" onclick="narrowRequirements(this)" type="button">Narrow to real material items</button>
           <button class="btn2" onclick="pullFromPhase1(this)" type="button">Re-pull from the Bid Requirements Reader</button>
           <span class="hint" style="margin:0" id="pullMsg"></span>
         </div>
@@ -1425,6 +1426,26 @@ Return ONLY valid JSON, no prose, no markdown fences. Schema:
   ]
 }`;
 
+const SYSTEM_REQ_TRIAGE = `You are sorting lines pulled out of a construction bid's specification into two piles, fast. This is a cheap first pass in front of an expensive one, so be decisive and do not explain yourself.
+
+KEEP a line only if it names a physical product, material, fixture, valve, pipe, fitting or piece of equipment that a plumbing estimator would put as a LINE ITEM ON A MATERIAL TAKEOFF and send out to a supplier for pricing.
+
+DROP everything else. In particular, drop a line even when it mentions pipe, copper, valves or fixtures, if what the line is actually about is:
+- how the work is installed, routed, supported, sloped, joined, or coordinated
+- testing, flushing, disinfecting, purging, cleaning, sterilizing, or commissioning
+- excavation, backfill, cutting, patching, painting, labelling, tagging or identification
+- submittals, shop drawings, samples, O&M manuals, as-builts, training, closeout
+- warranty, guarantee, bonding, insurance, permits, schedule, wages, site rules
+- general references to codes, standards or approved manufacturers with no actual product named
+- protection, storage and handling of materials already bought
+
+The test is simple: could a supplier put a price against this line? "Type L copper tubing, 2 inch" yes. "Support piping at 10 foot intervals with clevis hangers" is about installation, but clevis hangers are a purchasable item, so if the line names the hanger as something to be furnished, keep it; if it only describes spacing, drop it. When a line is genuinely borderline, KEEP it: the next pass is careful and can throw it out, whereas anything dropped here is never looked at again.
+
+You are given a numbered list. Return ONLY the numbers you are keeping.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{ "keep": [1, 4, 5] }`;
+
 const SYSTEM_COVERAGE = `You are checking an estimator's material takeoff for GAPS, before any supplier pricing is considered. No quotes are involved here at all.
 
 You are given the takeoff (the estimator's own list of what the job needs) and what the project itself calls for, from up to three places: requirement findings pulled out of the bid documents, items from the project's fixture or equipment schedule, and points raised on the bid kickoff sheet. Your one question is: does the takeoff have a line covering each of those, or does it not.
@@ -1560,11 +1581,13 @@ function updateCounts(){
   const read = suppliers.filter(s=>s.data).length;
   document.getElementById('tc-quotes').textContent = read;
   document.getElementById('tc-to').textContent = takeoffData ? (takeoffData.items||[]).length : 0;
-  const reqN = (bidReq ? ((bidReq.findings||[]).length + (bidReq.kickoff_points||[]).length) : 0) + (specBasis ? (specBasis.items||[]).length : 0);
+  const reqN = (bidReq ? (((bidReq.triaged||bidReq.findings)||[]).length + (bidReq.kickoff_points||[]).length) : 0) + (specBasis ? (specBasis.items||[]).length : 0);
   document.getElementById('tc-req').textContent = reqN;
   document.getElementById('tc-exc').textContent = cmpData ? (cmpData.exceptions||[]).length : 0;
   const rs = document.getElementById('reqSummary');
-  if(rs) rs.textContent = bidReq ? ((bidReq.findings||[]).length+' bid requirements, '+(bidReq.kickoff_points||[]).length+' kickoff points') : 'nothing pulled yet';
+  if(rs) rs.textContent = bidReq
+    ? ((bidReq.triaged ? (bidReq.triaged.length+' narrowed from '+(bidReq.findings||[]).length) : ((bidReq.findings||[]).length+' bid requirements'))+', '+(bidReq.kickoff_points||[]).length+' kickoff points')
+    : 'nothing pulled yet';
   const ss = document.getElementById('specSummary');
   if(ss) ss.textContent = specBasis ? ((specBasis.items||[]).length+' scheduled items loaded') : 'nothing loaded';
 }
@@ -1991,7 +2014,10 @@ function buildBidReqFrom(latestByPhase){
   let dupes = 0;
   const unique = [];
   pool.forEach(it=>{
-    const k = reqKey([it.requirement, it.item].filter(Boolean).join(' ') + '|' + (it.detail||''));
+    // Keyed on the requirement text alone, not text plus detail. On a spec big enough to
+    // produce thousands of findings, the same clause comes back with slightly different
+    // surrounding detail over and over, and keying on both barely dedupes anything.
+    const k = reqKey([it.requirement, it.item].filter(Boolean).join(' '));
     if(!k) return;
     if(seen.has(k)){ dupes++; return; }
     seen.add(k);
@@ -2036,6 +2062,51 @@ function bidReqAccountingText(r){
   return parts.join(', ')+'.'+(r._had_kickoff ? (' Plus '+(r.kickoff_points||[]).length+' point'+((r.kickoff_points||[]).length===1?'':'s')+' off the kickoff sheet.') : '');
 }
 
+// A dense yes/no pass in front of the expensive one. 150 short lines per call returning
+// nothing but a list of numbers costs a fraction of what it costs to properly coverage-check
+// the same 150, so this is the difference between a run that is worth making and one that is
+// not. Regex keeps recall high on purpose and this is what makes the cut precise.
+const TRIAGE_BATCH = 150;
+async function runRequirementTriage(btn, signal, onProgress){
+  const key = getKey();
+  if(!key) throw new Error('No API key. Open Setup at the top and paste your Anthropic key.');
+  if(!bidReq || !(bidReq.findings||[]).length) throw new Error('Nothing to narrow down. Load the project first.');
+  const src = bidReq.findings;
+  const ctrl = signal ? null : new AbortController();
+  const sig = signal || ctrl.signal;
+  const kept = [];
+  const batches = Math.ceil(src.length/TRIAGE_BATCH);
+  for(let b=0; b<batches; b++){
+    const slice = src.slice(b*TRIAGE_BATCH, (b+1)*TRIAGE_BATCH);
+    if(onProgress) onProgress('Narrowing down requirements: batch '+(b+1)+' of '+batches+' ('+kept.length+' kept so far)…');
+    const numbered = slice.map((r,i)=>(i+1)+'. '+[r.requirement, r.detail].filter(Boolean).join(' — ').replace(/\s+/g,' ').slice(0,300)).join('\n');
+    const out = await fetchAndParseJSON(key, [{type:'text', text:'LINES TO SORT:\n'+numbered}],
+      SYSTEM_REQ_TRIAGE, sig, null, 'the requirement triage, batch '+(b+1));
+    const idx = new Set((out.keep||[]).map(n=>parseInt(n,10)).filter(n=>n>=1 && n<=slice.length));
+    idx.forEach(n=>kept.push(slice[n-1]));
+  }
+  bidReq.triaged = kept;
+  bidReq.triage_meta = { at:new Date().toISOString(), from: src.length, kept: kept.length, batches };
+  renderReqOut();
+  renderReadiness();
+  updateCounts();
+  saveToCloud('p2_bid_requirements', bidReq);
+  return kept;
+}
+async function narrowRequirements(btn){
+  const msg = document.getElementById('pullMsg');
+  const o = btn.textContent; btn.disabled = true;
+  try{
+    await runRequirementTriage(btn, null, t=>{ btn.textContent = 'Narrowing…'; msg.style.color=''; msg.textContent = t; });
+    const m = bidReq.triage_meta;
+    msg.textContent = 'Narrowed '+m.from+' down to '+m.kept+' real material items in '+m.batches+' cheap pass'+(m.batches===1?'':'es')+'. The coverage check now runs on those '+m.kept+' instead of all '+m.from+'.';
+  }catch(e){
+    msg.textContent = e.name==='AbortError' ? 'Stopped.' : e.message;
+    msg.style.color = '#B4451F';
+  }finally{
+    btn.disabled = false; btn.textContent = o;
+  }
+}
 async function pullFromPhase1(btn){
   const msg = document.getElementById('pullMsg');
   msg.style.color = '';
@@ -2044,7 +2115,7 @@ async function pullFromPhase1(btn){
     const { latestByPhase } = await fetchProjectRows();
     const built = buildBidReqFrom(latestByPhase);
     if(!built) throw new Error('Nothing saved under "'+projectName()+'" from the Bid Requirements Reader. Check the project name matches exactly what was typed over there.');
-    bidReq = built;
+    bidReq = built;   // a fresh pull invalidates any earlier narrowing
     renderReqOut();
     saveToCloud('p2_bid_requirements', bidReq);
     msg.textContent = 'Re-pulled. '+bidReqAccountingText(built);
@@ -2059,14 +2130,21 @@ function renderReqOut(){
   const out = document.getElementById('reqOut');
   if(!bidReq){ out.innerHTML=''; return; }
   const f = bidReq.findings||[], k = bidReq.kickoff_points||[];
-  const heavy = (f.length+k.length) > 200;
+  const tri = bidReq.triaged || null;
+  const tmeta = bidReq.triage_meta || null;
+  const effective = (tri ? tri.length : f.length) + k.length;
+  const heavy = effective > 200;
   out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+f.length+' material bid requirement'+(f.length===1?'':'s')+'</b> and <b>'+k.length+' kickoff point'+(k.length===1?'':'s')+'</b> loaded. '+
       'The comparison will check the takeoff for anything here it has no line against.'+
       (bidReq.kickoff_meta&&bidReq.kickoff_meta.verdict ? ' Kickoff verdict on this job was <b>'+esc(bidReq.kickoff_meta.verdict)+'</b>.' : '')+'</div>'+
     '<div class="note info" style="margin-top:0"><b>Where that number comes from:</b> '+esc(bidReqAccountingText(bidReq))+
       ' Nothing was thrown away quietly, and the discarded ones are listed below so you can check the filter is not eating something real.</div>'+
-    (heavy ? '<div class="note warn" style="margin-top:0"><b>That is still a lot to check.</b> '+(f.length+k.length)+' requirements is roughly '+Math.ceil((f.length+k.length)/25)+' passes on the coverage check, so it will take a while and cost accordingly. If most of what is listed below is not really material, tell me and I will tighten the filter further.</div>' : '')+
-    '<div style="margin-top:6px"><button class="btnsm" onclick="toggleLines(this,\'req\')" type="button">Show the '+(f.length+k.length)+' item'+((f.length+k.length)===1?'':'s')+'</button>'+
+    (tri
+      ? '<div class="note ok" style="margin-top:0"><b>Narrowed to '+tri.length+' real material items</b> out of '+tmeta.from+', in '+tmeta.batches+' cheap pass'+(tmeta.batches===1?'':'es')+'. The coverage check will run on those '+tri.length+', which is about '+Math.ceil(effective/25)+' pass'+(Math.ceil(effective/25)===1?'':'es')+' instead of '+Math.ceil((f.length+k.length)/25)+'. Re-pulling from the Bid Requirements Reader clears this and you would narrow again.</div>'
+      : (heavy
+        ? '<div class="note warn" style="margin-top:0"><b>Too many to check one by one.</b> '+(f.length+k.length)+' requirements is about '+Math.ceil((f.length+k.length)/25)+' passes on the coverage check. Word matching can tell that a line mentions pipe, but not whether it says "furnish Type L copper" or "support piping at 10 foot intervals" — only one of those is a takeoff line. <b>Press Narrow to real material items</b> and a cheap pass at 150 lines a time sorts that out for a fraction of the cost. The comparison will do it for you if you skip it, but doing it here lets you look at the result first.</div>'
+        : ''))+
+    '<div style="margin-top:6px"><button class="btnsm" onclick="toggleLines(this,\'req\')" type="button">Show the '+effective+' item'+(effective===1?'':'s')+' being checked</button>'+
       ((bidReq._dropped||0) ? ' <button class="btnsm" onclick="toggleLines(this,\'reqdrop\')" type="button">Show what was left out ('+bidReq._dropped+')</button>' : '')+'</div>'+
     ((bidReq._dropped||0) ? '<div id="suplines-reqdrop" style="display:none;margin-top:12px">'+
       '<div class="note info" style="margin:0 0 10px">These were read as not being about material, so the takeoff is not checked against them. Submittals, bonding, insurance, warranty terms and execution requirements all land here and that is correct. If you spot something in this list that a takeoff really should carry a line for, say so and the filter gets fixed.'+
@@ -2076,7 +2154,7 @@ function renderReqOut(){
       '</tbody></table></div></div>' : '')+
     '<div id="suplines-req" style="display:none;margin-top:12px"><div class="tablewrap"><table class="matrix"><thead><tr>'+
       '<th style="width:110px">From</th><th>What the bid requires</th><th style="width:150px">Source</th></tr></thead><tbody>'+
-      f.map(x=>'<tr><td><span class="catchip">bid docs</span></td><td><div class="itemdesc">'+esc(x.requirement)+'</div>'+
+      (tri||f).map(x=>'<tr><td><span class="catchip">bid docs</span></td><td><div class="itemdesc">'+esc(x.requirement)+'</div>'+
         (x.detail?'<div class="itemsub">'+esc(x.detail)+'</div>':'')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>').join('')+
       k.map(x=>{
         // The label is often a trimmed version of the detail, so only show the detail when it
@@ -2120,7 +2198,7 @@ function renderSpecOut(){
 function renderReadiness(){
   const el = document.getElementById('cmpReadiness');
   const read = suppliers.filter(s=>s.data);
-  const reqCount = (bidReq ? (bidReq.findings||[]).length + (bidReq.kickoff_points||[]).length : 0) + (specBasis ? (specBasis.items||[]).length : 0);
+  const reqCount = effectiveRequirementCount();
   let html = '';
   if(!takeoffData){
     html += '<div class="note err"><b>No takeoff loaded, so there is nothing to compare against.</b> The takeoff is the reference for this whole tool: it is what the job needs and it is what went out to the suppliers. Load it on tab 1 first.</div>';
@@ -2129,14 +2207,26 @@ function renderReadiness(){
     bits.push('<b>Takeoff v'+takeoffData.version+':</b> '+(takeoffData.items||[]).length+' lines. This is the reference.');
     bits.push(read.length ? ('<b>'+read.length+' quote'+(read.length===1?'':'s')+' read:</b> '+read.map(s=>esc(s.name)).join(', '))
                           : 'No supplier quotes read yet, so only the coverage check will run.');
-    bits.push(reqCount ? ('<b>'+reqCount+' bid requirement'+(reqCount===1?'':'s')+' loaded,</b> so the takeoff itself gets checked for gaps.')
+    bits.push(reqCount ? ('<b>'+reqCount+' bid requirement'+(reqCount===1?'':'s')+' to check,</b> so the takeoff itself gets checked for gaps.')
                        : 'Nothing pulled from the Bid Requirements Reader, so the takeoff will not be checked for gaps. That is the check that catches scope nobody quoted because nobody asked for it.');
     const catCount = countCategoriesToRun();
-    const covPasses = Math.ceil(reqCount/25);
-    bits.push('<b>This run will make '+((read.length?catCount:0)+covPasses)+' pass'+(((read.length?catCount:0)+covPasses)===1?'':'es')+':</b> '+
-      (read.length ? (catCount+' for the quotes, one per material category, and ') : '')+covPasses+' for the coverage check.');
+    const effReq = effectiveRequirementCount();
+    const covPasses = Math.ceil(effReq/25);
+    const needsTriage = bidReq && !bidReq.triaged && (bidReq.findings||[]).length > 200;
+    if(bidReq && bidReq.triaged) bits.push('Requirements already narrowed to <b>'+bidReq.triaged.length+'</b> real material items out of '+((bidReq.findings||[]).length)+'.');
+    const triagePasses = needsTriage ? Math.ceil((bidReq.findings||[]).length/150) : 0;
+    if(needsTriage){
+      // No point quoting a coverage figure off the un-narrowed list: narrowing is about to cut
+      // it by roughly an order of magnitude, and a scary number here would just be wrong.
+      bits.push('<b>This run starts with '+triagePasses+' cheap pass'+(triagePasses===1?'':'es')+'</b> to narrow '+((bidReq.findings||[]).length)+' requirements down to the ones that are really material, then coverage-checks whatever survives'+
+        (read.length ? (', on top of '+catCount+' pass'+(catCount===1?'':'es')+' for the quotes') : '')+'.');
+    } else {
+      bits.push('<b>This run will make '+((read.length?catCount:0)+covPasses)+' pass'+(((read.length?catCount:0)+covPasses)===1?'':'es')+':</b> '+
+        (read.length ? (catCount+' for the quotes, one per material category, and ') : '')+covPasses+' for the coverage check.');
+    }
     html += '<div class="note info">'+bits.join('<br>')+'</div>';
-    if(covPasses > 12) html += '<div class="note warn"><b>The coverage check alone is '+covPasses+' passes.</b> That is a long run and it costs real money. It is worth looking at tab 3 first and confirming those requirements are actually material items before you set it going.</div>';
+    if(needsTriage) html += '<div class="note warn"><b>'+((bidReq.findings||[]).length)+' requirements is too many to check one by one, so this run will narrow them down first</b> with a cheap pass before the real coverage check. You can do that on tab 3 instead if you would rather see the shortlist before committing to the run.</div>';
+    else if(covPasses > 12) html += '<div class="note warn"><b>The coverage check alone is '+covPasses+' passes.</b> That is a long run and it costs real money. Worth a look at tab 3 first.</div>';
     if(read.length===1) html += '<div class="note warn">Only one quote is loaded. It still gets checked line by line against the takeoff, but there is nothing to compare it against supplier to supplier.</div>';
   }
   el.innerHTML = html;
@@ -2144,6 +2234,13 @@ function renderReadiness(){
 }
 // Same category union the run itself builds, computed up front so the readiness note can say
 // honestly how many passes this is about to make rather than surprising anyone with the bill.
+// What the coverage check will actually run on: the narrowed shortlist if there is one, the
+// full regex-filtered set if not, plus the kickoff points either way.
+function effectiveRequirementCount(){
+  const f = bidReq ? ((bidReq.triaged || bidReq.findings || []).length) : 0;
+  const k = bidReq ? ((bidReq.kickoff_points||[]).length) : 0;
+  return f + k + (specBasis ? (specBasis.items||[]).length : 0);
+}
 function countCategoriesToRun(){
   const seen = new Set();
   ((takeoffData&&takeoffData.items)||[]).forEach(it=>seen.add(catOf(it)));
@@ -2213,8 +2310,20 @@ async function runCompare(){
     }
 
     /* ---- lane 2: the takeoff against what the bid requires ---- */
+    // Stage 0: if the requirement list is too big to check line by line, narrow it first.
+    // Cheap, and it is the difference between 51 expensive passes and about 6.
+    if(bidReq && !bidReq.triaged && (bidReq.findings||[]).length > 200){
+      try{
+        await runRequirementTriage(null, cmpAbort.signal, t=>{ prog.textContent = t; });
+        all._run.triage = Object.assign({}, bidReq.triage_meta);
+      }catch(e){
+        if(e.name === 'AbortError') throw e;
+        console.error(e);
+        all._run.failed.push({ category:'requirement triage', error:e.message, lane:'coverage' });
+      }
+    }
     const reqs = [].concat(
-      ((bidReq&&bidReq.findings)||[]).map(f=>({ requirement:f.requirement, detail:f.detail, from:'bid documents', source:f.source||f.topic||'' })),
+      (((bidReq&&(bidReq.triaged||bidReq.findings))||[])).map(f=>({ requirement:f.requirement, detail:f.detail, from:'bid documents', source:f.source||f.topic||'' })),
       ((specBasis&&specBasis.items)||[]).map(i=>({ requirement:[i.tag,i.description].filter(Boolean).join(' '), detail:[[i.basis_of_design_manufacturer,i.model].filter(Boolean).join(' '), (i.requirements||[]).join('; ')].filter(Boolean).join(' · '), from:'schedule', source:i.source||'' })),
       ((bidReq&&bidReq.kickoff_points)||[]).map(k=>({ requirement:k.label, detail:k.detail, from:'kickoff', source:k.source||'Kickoff Sheet' }))
     ).filter(r=>r.requirement);
