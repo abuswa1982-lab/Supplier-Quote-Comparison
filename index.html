@@ -278,6 +278,28 @@
   .sev.low{background:#EEF2F6;color:var(--muted);border:1px solid var(--line-strong)}
   .kind{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--navy);background:var(--blue-tint);border:1px solid #CBDDEE;border-radius:3px;padding:2px 7px}
   .whochip{font-family:var(--mono);font-size:10.5px;color:var(--ink);background:#EEF2F6;border:1px solid var(--line-strong);border-radius:3px;padding:2px 7px}
+  .st{display:inline-block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:3px;white-space:nowrap}
+  .st.h2h{background:var(--green-tint);color:#215A3B;border:1px solid #BFDCC9}
+  .st.sole{background:var(--blue-tint);color:#16304B;border:1px solid #CBDDEE}
+  .st.block{background:var(--amber-tint);color:var(--amber);border:1px solid #EAD8A8}
+  .st.none{background:var(--rust-tint);color:var(--rust);border:1px solid #EBC3B0}
+  .qchk{font-family:var(--mono);font-size:11px;white-space:nowrap}
+  .qchk.short{color:var(--rust);font-weight:600}
+  .qchk.over{color:var(--amber)}
+  .qchk.ok{color:var(--green)}
+  .qchk.bad{color:var(--muted)}
+  .lowhigh{font-family:var(--mono);font-size:12px;white-space:nowrap}
+  .lowhigh .lo{color:#215A3B;font-weight:600}
+  .lowhigh .hi{color:var(--muted)}
+  .lowhigh .sp{color:var(--rust);font-weight:600}
+  .pkg{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:20px}
+  .pkgcard{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:15px 16px;border-top:4px solid var(--line-strong)}
+  .pkgcard .pn{font-family:var(--display);font-weight:600;font-size:15px;color:var(--navy);word-break:break-word}
+  .pkgcard .pv{font-family:var(--display);font-weight:700;font-size:22px;margin:8px 0 1px}
+  .pkgcard .pl{font-family:var(--mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);line-height:1.4}
+  .pkgcard .prow{display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-top:1px solid #EDF1F4;margin-top:8px}
+  .pkgcard .prow span:first-child{color:var(--muted)}
+  .pkgcard .prow span:last-child{font-weight:600;font-family:var(--mono);font-size:12px}
   .filterbar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
   .filterbar .fb{
     font-family:var(--body);font-size:12px;font-weight:600;background:var(--card);color:var(--muted);
@@ -389,6 +411,7 @@
     <button id="ptab-bidreq" onclick="setPageTab('bidreq')" type="button">3 &middot; What the Bid Requires<span class="tabcount" id="tc-req">0</span></button>
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">4 &middot; Comparison</button>
     <button id="ptab-exceptions" onclick="setPageTab('exceptions')" type="button">5 &middot; Exceptions<span class="tabcount" id="tc-exc">0</span></button>
+    <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
   </div>
 
@@ -527,6 +550,15 @@
     <div id="excResults"></div>
   </div>
 
+  <!-- ============================ TAB 6: BUY SHEET ============================ -->
+  <div id="page-buy" style="display:none">
+    <div class="note info">
+      <b>Where the quotes can actually be compared, and where they only look like they can.</b> Every takeoff line falls into one of four states. Only one of them is a price comparison. Nothing here is asked of the AI: every figure on this tab is arithmetic done in the browser from what is already on screen, so you can check any of it by hand.
+    </div>
+    <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 4.</p></div>
+    <div id="buyResults"></div>
+  </div>
+
   <!-- ============================ TAB ASK ============================ -->
   <div id="page-ask" style="display:none">
     <div class="card">
@@ -602,13 +634,14 @@ function toggleCollapse(headEl){
   headEl.classList.toggle('open', !open);
 }
 function setPageTab(p){
-  ['takeoff','quotes','bidreq','compare','exceptions','ask'].forEach(name=>{
+  ['takeoff','quotes','bidreq','compare','exceptions','buy','ask'].forEach(name=>{
     const page = document.getElementById('page-'+name);
     const tab = document.getElementById('ptab-'+name);
     if(page) page.style.display = (name===p) ? 'block' : 'none';
     if(tab) tab.classList.toggle('on', name===p);
   });
   if(p==='compare') renderReadiness();
+  if(p==='buy') renderBuySheet();
   window.scrollTo({top:0, behavior:'smooth'});
 }
 function fillAsk(q){ document.getElementById('askQ').value = q; }
@@ -706,6 +739,17 @@ function autoBackupOnFirstFailure(phase, data){
   autoBackupDownloadedForOutage = true;
   downloadBackup(phase, data);
 }
+// Some of what is held in memory is big and can be rebuilt from the Worker for free on the
+// next load. Writing it back would bloat every save for no benefit.
+function stripForSave(phase, data){
+  if(phase !== 'p2_bid_requirements' || !data) return data;
+  const copy = Object.assign({}, data);
+  delete copy._dropped_full;
+  delete copy._dropped_sample;
+  delete copy.triaged;
+  delete copy.triage_dropped;
+  return copy;
+}
 async function saveToCloud(phase, data){
   const url = workerUrl(), project = projectName();
   if(!project || !url){
@@ -717,7 +761,7 @@ async function saveToCloud(phase, data){
   try{
     const res = await fetch(url + '/save', {
       method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ project_name: project, phase, data })
+      body: JSON.stringify({ project_name: project, phase, data: stripForSave(phase, data) })
     });
     if(res.ok){
       cloudStatus('Saved "'+phase+'" to the cloud just now.');
@@ -871,6 +915,15 @@ async function loadCloudProject(btn){
     const stored = latestByPhase.p2_bid_requirements ? JSON.parse(latestByPhase.p2_bid_requirements.data) : null;
     const fresh = buildBidReqFrom(latestByPhase);
     if(fresh){
+      // Triage costs money, so a decision already made is carried onto the rebuilt findings
+      // instead of being thrown away and paid for again.
+      if(stored && (stored.triage_keys||[]).length){
+        const keys = new Set(stored.triage_keys);
+        fresh.triaged = fresh.findings.filter(f=>keys.has(reqKey(f.requirement)));
+        fresh.triage_dropped = fresh.findings.filter(f=>!keys.has(reqKey(f.requirement)));
+        fresh.triage_keys = stored.triage_keys;
+        fresh.triage_meta = stored.triage_meta || { at:'', from: fresh.findings.length, kept: fresh.triaged.length, batches:0 };
+      }
       bidReq = fresh;
       renderReqOut();
       loaded.push(fresh.findings.length+' material bid requirement'+(fresh.findings.length===1?'':'s')+
@@ -1274,39 +1327,60 @@ async function fetchAndParseJSON(key, content, systemPrompt, signal, hintElId, c
 /* ================================ PROMPTS ================================= */
 const SYSTEM_QUOTE = `You are transcribing a supplier's material quote for a mechanical/plumbing construction bid into structured data. You are a transcriber first and an interpreter second. An estimator is going to make a real money decision from this, so a guess dressed up as a fact is worse than an honest blank.
 
+WHAT THESE DOCUMENTS ACTUALLY LOOK LIKE. Real supplier quotes are messier than a clean line-item list, and the messy parts are usually where the money is:
+- One file often contains SEVERAL SEPARATE QUOTES stapled or scanned together, with different quote numbers, different formats, even different pages sizes. Do not merge them.
+- Fixture quotes are usually GROUPED BY SCHEDULE TAG (WC-1, LAV-1, SK-2, EWC-1, RPZ-1). Under each tag sit the component parts (bowl, flushometer, seat, wax gasket, carrier, stops, supplies, trap), and the price appears once, at the bottom of the group, as "Subtotal WC-1 ..... 363.57". The unit price column is often completely blank.
+- Inside such a group, a quantity of "1ea" against each component means ONE PER ASSEMBLY, not one for the whole job. The quote frequently never says how many of that fixture the job needs. That distinction decides whether a number is a unit price or a total, so never assume.
+- Prices may be LIST prices with a multiplier applied separately, often handwritten in the margin ("List x .138 mult"). The printed number is then not the price.
+- Handwritten notes are common and frequently carry the real number: a net total scrawled at the bottom, a multiplier, a price struck through and replaced.
+
 RULES:
-1. Transcribe what is actually printed. Never invent a line, a quantity, a model number, or a price. If a field is not on the page, return an empty string for it (or 0 for a number), not a plausible value.
-2. "description" must be the supplier's own wording, as close to verbatim as you can get it, abbreviations and all. Do not clean it up, expand it, or standardize it. The whole downstream comparison depends on seeing what they actually wrote.
-3. Pull "manufacturer" and "model" out into their own fields ONLY when the quote actually names them. A model number buried in the description still counts, but do not infer a manufacturer from a product type.
-4. "qty" is the number as printed. "uom" is the unit as printed (EA, LF, FT, C (per hundred), M (per thousand), LOT, BOX, LENGTH, ROLL, etc.). Never convert units. Never normalize per-hundred pricing into per-foot pricing. If the unit is written in a way you cannot read confidently, put what is printed and set "qty_unclear": true.
-5. Set "is_package": true when a line covers a bundle of things rather than one item type — "WC package", "trim kit", "1 LOT", "fixture package", a line whose quantity is 1 but whose description clearly covers many units. Put whatever the quote says the package contains in "package_contents", else empty string.
-6. "substitution_language" captures any wording on that line signalling the supplier is offering something other than a named product: "or equal", "in lieu of", "alternate", "substitute", "as manufactured by", "approved equal". Copy the phrase. Empty string if there is none.
-7. Prices are plain numbers, no currency symbols, no commas. If only an extended price is shown, fill "extended_price" and leave "unit_price" at 0. Do not calculate one from the other.
-8. "category" must be exactly one of: Fixtures, Equipment, Pipe, Fittings, Valves, Hangers & Supports, Insulation, Specialties & Trim, Freight, Tax & Fees, Labor & Services, Other. Fixtures means plumbing fixtures and their trim (water closets, lavatories, sinks, faucets, carriers, drains). Equipment means water heaters, pumps, boilers, backflow preventers, and similar. When a line honestly does not fit, use Other rather than forcing it.
-9. Quote-level terms matter as much as the line items. Capture exclusions, what is NOT included, freight/shipping terms, tax treatment, lead times, price validity, storage/offloading, and any conditions. An estimator gets hurt by what is missing from a quote far more often than by what is on it.
-10. No em dashes anywhere in your output.
+1. Transcribe what is actually printed or written. Never invent a line, a quantity, a model number, or a price. If a field is not there, return an empty string (or 0 for a number), not a plausible value.
+2. "description" must be the supplier's own wording, as close to verbatim as you can get it, abbreviations and all. Do not clean it up or standardize it. The comparison depends on seeing what they actually wrote.
+3. SEVERAL QUOTES IN ONE FILE: list each one in "documents" with its own quote number, page range and a short label. Tag every item and every group with the "document" label it belongs to. If the whole file is genuinely one quote, return one entry.
+4. GROUPS: whenever items sit under a schedule tag or an assembly heading, record the group in "groups" with its tag and its subtotal exactly as printed, and put that same tag on each item in "group_tag". If a group has no printed subtotal, leave subtotal at 0 rather than adding the lines up yourself.
+5. QUANTITY BASIS: for every item and every group set "qty_basis" to "per assembly" when the quantity is per one fixture or one assembly, "job total" when the quantity is genuinely how many the job gets, and "unclear" when the document does not make it possible to tell. "unclear" is a correct and useful answer here. Do not default to "job total" because it looks tidier.
+6. PRICE BASIS: set "price_basis" to "net" when the price shown is the price, "list" when it is a list or published price that a multiplier or discount applies to, and "unclear" otherwise. If a multiplier or discount appears anywhere, printed or handwritten, put it in "quote_meta.multiplier" verbatim and describe what it applies to. NEVER apply a multiplier yourself and never return an adjusted number. Report what is written.
+7. HANDWRITING: capture every handwritten mark that carries meaning in "annotations": totals, multipliers, strike-throughs, corrections, notes to the estimator. Give the verbatim text, the page, and in "meaning" your plain reading of what it does. Set "handwritten": true on any item or group whose price came from handwriting. If a printed figure has been crossed out, say so in the annotation rather than deleting the printed figure.
+8. "qty" is the number as printed. "uom" is the unit as printed (EA, LF, FT, C, M, LOT, BOX, LENGTH, ROLL). Never convert. Never normalize per-hundred pricing into per-foot pricing. If the unit cannot be read confidently, put what is printed and set "qty_unclear": true.
+9. Set "is_package": true when a line covers a bundle rather than one item type: a "package", a "kit", "1 LOT", a line whose quantity is 1 but whose description clearly covers many units.
+10. "substitution_language" captures wording on a line signalling something other than a named product is being offered: "or equal", "in lieu of", "alternate", "substitute", "approved equal", and also notes like "specified model does not meet required capacity, above meets criteria". Copy the phrase. Note that a leading marker character such as ^ or * next to some items usually means something to the supplier; if you cannot tell what, record it in "notes" and flag it in quote_meta.notes rather than ignoring it.
+11. Prices are plain numbers, no currency symbols, no commas. If only a group subtotal is shown, put it on the group and leave the item prices at 0. Do not distribute a subtotal across the lines.
+12. "category" must be exactly one of: Fixtures, Equipment, Pipe, Fittings, Valves, Hangers & Supports, Insulation, Specialties & Trim, Freight, Tax & Fees, Labor & Services, Other.
+13. Quote-level terms matter as much as the line items. Capture exclusions, what is NOT included, freight and shipping terms (including a "PLUS SHIPPING" note that applies to only some groups: put that on the group), tax treatment, lead times, price validity, restocking and return conditions. An estimator gets hurt by what is missing from a quote far more often than by what is on it.
+14. No em dashes anywhere in your output.
 
 Return ONLY valid JSON, no prose, no markdown fences. Schema:
 {
-  "supplier": "the supplier/vendor company name as printed on this quote, empty string if not visible on these pages",
+  "supplier": "the supplier company name as printed, empty string if not visible on these pages",
+  "documents": [
+    { "label": "short name for this quote, e.g. S1873585 fixtures", "quote_number": "", "pages": "e.g. 1-7 of what you were given", "kind": "e.g. fixture quote, equipment quote, drainage list" }
+  ],
   "quote_meta": {
     "quote_number": "", "quote_date": "", "valid_until": "", "contact": "",
-    "freight": "what the quote says about freight/shipping, empty if silent",
-    "tax": "what the quote says about sales tax, empty if silent",
-    "lead_time": "", "terms": "",
+    "freight": "", "tax": "", "lead_time": "", "terms": "",
+    "price_basis": "net | list | mixed | unclear",
+    "multiplier": "verbatim any multiplier or discount, and what it applies to, empty if none",
     "exclusions": ["each thing the quote explicitly excludes or says is not included"],
-    "notes": ["any other condition or caveat an estimator would want to know about"]
+    "notes": ["any other condition, marker or caveat an estimator would want to know about"]
   },
   "totals_stated": { "subtotal": 0, "tax": 0, "freight": 0, "total": 0 },
+  "annotations": [
+    { "text": "verbatim", "handwritten": true, "page": 0, "meaning": "plain reading of what this does", "affects": "which document, group or figure" }
+  ],
+  "groups": [
+    { "tag": "e.g. WC-1", "description": "what the assembly is, if stated", "document": "matching a documents label",
+      "subtotal": 0, "price_basis": "net | list | unclear", "qty_basis": "per assembly | job total | unclear",
+      "plus_shipping": false, "handwritten": false, "notes": "" }
+  ],
   "items": [
-    { "line_ref": "the quote's own line number/tag if it has one, else empty string",
+    { "line_ref": "", "document": "", "group_tag": "",
       "description": "verbatim", "category": "one of the listed categories",
-      "qty": 0, "uom": "", "qty_unclear": false,
+      "qty": 0, "uom": "", "qty_unclear": false, "qty_basis": "per assembly | job total | unclear",
       "manufacturer": "", "model": "",
-      "unit_price": 0, "extended_price": 0,
+      "unit_price": 0, "extended_price": 0, "price_basis": "net | list | unclear", "handwritten": false,
       "is_package": false, "package_contents": "",
-      "substitution_language": "", "notes": "anything on the line that does not fit the fields above",
-      "page": 0 }
+      "substitution_language": "", "notes": "", "page": 0 }
   ]
 }`;
 
@@ -1380,6 +1454,11 @@ MATCH VERDICTS, use exactly one:
 - "substitution": the supplier is offering a different product than the takeoff or the schedule calls for. Different manufacturer, different model, a different material or rating, or explicit "or equal" wording. Not automatically bad, automatically a decision.
 - "missing": nothing on that supplier's quote covers this takeoff line.
 - "unclear": something is there but you cannot responsibly say what it covers. Lump and package lines, unreadable quantities, descriptions too vague to pin down.
+
+ASSEMBLIES AND WHAT A PRICE ACTUALLY COVERS. Fixture quotes are usually grouped by schedule tag, with the components listed underneath and a single subtotal at the bottom of the group. You are given those groups. Three things follow:
+- Match the group's TAG to the takeoff line for that fixture, and treat the group as the unit of comparison. Do not try to match a wax gasket or a supply stop against a takeoff line of its own; they are components of the assembly, and saying so in "why" is the useful answer.
+- A group whose "qty_basis" is "per assembly" or "unclear" is priced for ONE fixture, or on a basis the quote never states. Against a takeoff line calling for 12, that is not a match at any price: the verdict is "unclear" and it is a QUANTITY exception, because the quote and the takeoff are counting different things.
+- A group whose "price_basis" is "list" is not a quoted price at all. Verdict "unclear", raise it, and never multiply anything out yourself.
 
 UNITS AND QUANTITIES:
 5. The takeoff's quantity and unit are the reference. Compare the supplier's against it, and never convert either one. If the takeoff says 500 LF and a supplier quotes 25 LENGTH, report both exactly as written and raise a UOM exception. Silently converting is how an estimator ends up off by a factor of a hundred.
@@ -1584,6 +1663,12 @@ function updateCounts(){
   const reqN = (bidReq ? (((bidReq.triaged||bidReq.findings)||[]).length + (bidReq.kickoff_points||[]).length) : 0) + (specBasis ? (specBasis.items||[]).length : 0);
   document.getElementById('tc-req').textContent = reqN;
   document.getElementById('tc-exc').textContent = cmpData ? (cmpData.exceptions||[]).length : 0;
+  const bsBadge = document.getElementById('tc-buy');
+  if(bsBadge){
+    const bs = cmpData ? buildBuySheet() : null;
+    bsBadge.textContent = bs ? bs.counts.head_to_head : 0;
+    bsBadge.title = bs ? (bs.counts.head_to_head+' lines can be price-compared head to head') : '';
+  }
   const rs = document.getElementById('reqSummary');
   if(rs) rs.textContent = bidReq
     ? ((bidReq.triaged ? (bidReq.triaged.length+' narrowed from '+(bidReq.findings||[]).length) : ((bidReq.findings||[]).length+' bid requirements'))+', '+(bidReq.kickoff_points||[]).length+' kickoff points')
@@ -1619,8 +1704,11 @@ async function runSupplier(id){
   const perBatch = Math.max(1, parseInt(document.getElementById('quotePagesPerBatch').value,10) || 6);
 
   try{
-    const merged = { supplier: s.name, quote_meta:{ quote_number:'',quote_date:'',valid_until:'',contact:'',freight:'',tax:'',lead_time:'',terms:'',exclusions:[],notes:[] },
-                     totals_stated:{subtotal:0,tax:0,freight:0,total:0}, items:[], _read:{ mode:s.mode, batches:0, at:new Date().toISOString() } };
+    const merged = { supplier: s.name,
+                     quote_meta:{ quote_number:'',quote_date:'',valid_until:'',contact:'',freight:'',tax:'',lead_time:'',terms:'',price_basis:'',multiplier:'',exclusions:[],notes:[] },
+                     totals_stated:{subtotal:0,tax:0,freight:0,total:0},
+                     documents:[], groups:[], annotations:[], items:[],
+                     _read:{ mode:s.mode, batches:0, at:new Date().toISOString() } };
     const header = 'A SUPPLIER QUOTE for a mechanical/plumbing bid. The supplier name the estimator gave for this quote is "'+s.name+'"; prefer the name printed on the quote itself if there is one. Transcribe every line item.';
     let jobs = [];
     if(s.mode==='paste'){
@@ -1657,19 +1745,56 @@ function mergeQuoteResult(merged, out){
   if(!out) return;
   if(out.supplier && !merged.quote_meta.printed_name) merged.quote_meta.printed_name = out.supplier;
   const m = out.quote_meta || {};
-  ['quote_number','quote_date','valid_until','contact','freight','tax','lead_time','terms'].forEach(k=>{
+  ['quote_number','quote_date','valid_until','contact','freight','tax','lead_time','terms','price_basis','multiplier'].forEach(k=>{
     if(!merged.quote_meta[k] && m[k]) merged.quote_meta[k] = m[k];
   });
   (m.exclusions||[]).forEach(x=>{ if(x && merged.quote_meta.exclusions.indexOf(x)<0) merged.quote_meta.exclusions.push(x); });
   (m.notes||[]).forEach(x=>{ if(x && merged.quote_meta.notes.indexOf(x)<0) merged.quote_meta.notes.push(x); });
   const t = out.totals_stated || {};
   ['subtotal','tax','freight','total'].forEach(k=>{ if(!merged.totals_stated[k] && num(t[k])) merged.totals_stated[k] = num(t[k]); });
+
+  // Several quotes in one file is normal, so documents are collected rather than collapsed.
+  // Keyed on quote number where there is one, since the header repeats on every page and would
+  // otherwise be reported as a new document per batch.
+  (out.documents||[]).forEach(d=>{
+    const key = (d.quote_number||d.label||'').trim().toLowerCase();
+    if(!key) return;
+    const found = merged.documents.find(x=>((x.quote_number||x.label||'').trim().toLowerCase())===key);
+    if(found){ if(!found.kind && d.kind) found.kind = d.kind; return; }
+    merged.documents.push({ label:d.label||d.quote_number||'', quote_number:d.quote_number||'', pages:d.pages||'', kind:d.kind||'' });
+  });
+  // A group can be split across a page break, so a second sighting fills in what the first
+  // batch could not see rather than becoming a duplicate row.
+  (out.groups||[]).forEach(g=>{
+    const tag = String(g.tag||'').trim();
+    if(!tag) return;
+    const found = merged.groups.find(x=>x.tag.toLowerCase()===tag.toLowerCase() && (x.document||'')===(g.document||''));
+    if(found){
+      if(!num(found.subtotal) && num(g.subtotal)) found.subtotal = num(g.subtotal);
+      if(!found.description && g.description) found.description = g.description;
+      found.plus_shipping = found.plus_shipping || !!g.plus_shipping;
+      found.handwritten = found.handwritten || !!g.handwritten;
+      if(!found.notes && g.notes) found.notes = g.notes;
+      return;
+    }
+    merged.groups.push({ tag, description:g.description||'', document:g.document||'', subtotal:num(g.subtotal),
+      price_basis:g.price_basis||'unclear', qty_basis:g.qty_basis||'unclear',
+      plus_shipping:!!g.plus_shipping, handwritten:!!g.handwritten, notes:g.notes||'' });
+  });
+  (out.annotations||[]).forEach(a=>{
+    const key = String(a.text||'').trim().toLowerCase();
+    if(!key) return;
+    if(merged.annotations.some(x=>String(x.text||'').trim().toLowerCase()===key)) return;
+    merged.annotations.push({ text:a.text||'', handwritten:a.handwritten!==false, page:num(a.page), meaning:a.meaning||'', affects:a.affects||'' });
+  });
   (out.items||[]).forEach(it=>{
     merged.items.push({
-      line_ref: it.line_ref||'', description: it.description||'', category: CATEGORIES.indexOf(it.category)>=0 ? it.category : 'Other',
-      qty: num(it.qty), uom: it.uom||'', qty_unclear: !!it.qty_unclear,
+      line_ref: it.line_ref||'', document: it.document||'', group_tag: it.group_tag||'',
+      description: it.description||'', category: CATEGORIES.indexOf(it.category)>=0 ? it.category : 'Other',
+      qty: num(it.qty), uom: it.uom||'', qty_unclear: !!it.qty_unclear, qty_basis: it.qty_basis||'unclear',
       manufacturer: it.manufacturer||'', model: it.model||'',
       unit_price: num(it.unit_price), extended_price: num(it.extended_price),
+      price_basis: it.price_basis||'unclear', handwritten: !!it.handwritten,
       is_package: !!it.is_package, package_contents: it.package_contents||'',
       substitution_language: it.substitution_language||'', notes: it.notes||'', page: num(it.page)
     });
@@ -1680,10 +1805,85 @@ function mergeQuoteResult(merged, out){
 // presenting a number the supplier never wrote down.
 function supplierTotal(d){
   const stated = num(d.totals_stated && d.totals_stated.total);
-  if(stated) return { value: stated, derived:false };
+  if(stated) return { value: stated, basis:'as printed on the quote', derived:false };
+  // A tag-grouped fixture quote prices the assembly, not the line: the lines are all blank and
+  // the only real numbers on the page are the group subtotals. Adding the lines up there would
+  // produce zero and quietly present it as a price.
+  const groupSum = (d.groups||[]).reduce((a,g)=>a+num(g.subtotal), 0);
+  if(groupSum) return { value: groupSum, basis:'added up from the group subtotals', derived:true };
   let sum = 0;
   (d.items||[]).forEach(it=>{ sum += it.extended_price ? num(it.extended_price) : (num(it.qty)*num(it.unit_price)); });
-  return { value: sum, derived:true };
+  return { value: sum, basis:'added up from the lines', derived:true };
+}
+// Everything about this quote that a person has to resolve before the number means anything.
+// Computed in plain code from what was extracted, not asked of the model, so it is the same
+// answer every time and can be checked against the document by eye.
+function quoteFlags(d){
+  const f = [];
+  const items = d.items||[], groups = d.groups||[], anns = d.annotations||[];
+  if((d.documents||[]).length > 1){
+    f.push({ kind:'MULTIPLE QUOTES', severity:'high',
+      headline:'This file holds '+d.documents.length+' separate quotes, not one.',
+      detail: d.documents.map(x=>[x.label||x.quote_number, x.pages, x.kind].filter(Boolean).join(', ')).join(' | '),
+      ask:'Confirm which of these quotes you are actually pricing against, and whether they overlap or are meant to be added together.' });
+  }
+  const mult = (d.quote_meta&&d.quote_meta.multiplier||'').trim();
+  if(mult){
+    f.push({ kind:'PRICE BASIS', severity:'high',
+      headline:'Prices on this quote are not the prices: a multiplier applies.',
+      detail:'Recorded exactly as found: "'+mult+'". Nothing on screen has been adjusted by it, deliberately, because guessing at what it covers is how a bid goes wrong.',
+      ask:'Confirm the multiplier and exactly which sections and line items it applies to, then confirm the net figure in writing.' });
+  }
+  const listPriced = items.filter(i=>i.price_basis==='list').length + groups.filter(g=>g.price_basis==='list').length;
+  if(listPriced && !mult){
+    f.push({ kind:'PRICE BASIS', severity:'high',
+      headline: listPriced+' line'+(listPriced===1?'':'s')+' on this quote are list prices with no multiplier recorded.',
+      detail:'A list price is not a quoted price. Without the multiplier this quote cannot be compared to a net one.',
+      ask:'What is the multiplier or discount off list on these items?' });
+  }
+  const hw = anns.filter(a=>a.handwritten);
+  if(hw.length){
+    f.push({ kind:'HANDWRITTEN', severity:'high',
+      headline: hw.length+' handwritten mark'+(hw.length===1?'':'s')+' on this quote carry meaning, and at least some of them carry the price.',
+      detail: hw.map(a=>'"'+a.text+'"'+(a.page?(' (page '+a.page+')'):'')+(a.meaning?(' — '+a.meaning):'')).join('; '),
+      ask:'Ask for these confirmed in a typed, reissued quote. A number in biro is not something to hang a bid on.' });
+  }
+  const perAssembly = groups.filter(g=>g.qty_basis==='per assembly').length;
+  const unclearBasis = groups.filter(g=>g.qty_basis==='unclear').length;
+  if(perAssembly || unclearBasis){
+    f.push({ kind:'QUANTITY BASIS', severity:'high',
+      headline:'Group prices here are per assembly, not for the job.',
+      detail:(perAssembly?perAssembly+' group'+(perAssembly===1?'':'s')+' priced per assembly. ':'')+
+             (unclearBasis?unclearBasis+' group'+(unclearBasis===1?'':'s')+' where the quote does not say whether the quantity is per assembly or for the whole job. ':'')+
+             'The quote never states how many of each fixture the job takes, so a subtotal here is a unit price, not a total.',
+      ask:'Confirm these are unit prices per fixture, and requote with our quantities against each tag.' });
+  }
+  const noPrice = groups.filter(g=>!num(g.subtotal)).length;
+  if(noPrice) f.push({ kind:'AMBIGUOUS', severity:'medium',
+    headline: noPrice===1 ? 'One group has no price against it at all.' : noPrice+' groups have no price against them at all.',
+    detail: groups.filter(g=>!num(g.subtotal)).map(g=>g.tag).join(', '),
+    ask:'These tags have no figure on the quote. Are they omitted, included elsewhere, or still to be priced?' });
+  const ship = groups.filter(g=>g.plus_shipping);
+  if(ship.length) f.push({ kind:'EXCLUSION', severity:'medium',
+    headline: ship.length+' group'+(ship.length===1?'':'s')+' are marked plus shipping while the rest are not.',
+    detail:'Affects: '+ship.map(g=>g.tag).join(', ')+'. Freight is excluded on those but apparently included elsewhere, which makes the totals inconsistent with each other.',
+    ask:'What is the freight cost on these specific items, and is freight genuinely included on the rest?' });
+  const subs = items.filter(i=>i.substitution_language);
+  if(subs.length) f.push({ kind:'SUBSTITUTION', severity:'high',
+    headline: subs.length+' line'+(subs.length===1?'':'s')+' carry substitution wording.',
+    detail: subs.slice(0,6).map(i=>(i.model||i.description||'').slice(0,60)+': "'+i.substitution_language+'"').join('; ')+(subs.length>6?' and '+(subs.length-6)+' more':''),
+    ask:'Confirm each of these against the fixture schedule and whether the engineer has approved the equal.' });
+  const pk = items.filter(i=>i.is_package).length;
+  if(pk) f.push({ kind:'PACKAGE', severity:'medium',
+    headline: pk+' line'+(pk===1?'':'s')+' are a package or lot rather than a countable item.',
+    detail:'A lot line cannot be checked against a takeoff quantity.',
+    ask:'Break these out per unit with quantities and model numbers.' });
+  const qu = items.filter(i=>i.qty_unclear).length;
+  if(qu) f.push({ kind:'AMBIGUOUS', severity:'medium',
+    headline: qu+' quantit'+(qu===1?'y is':'ies are')+' unreadable on this quote.',
+    detail:'Most often a scan that did not come through cleanly.',
+    ask:'Confirm the quantities on these lines.' });
+  return f;
 }
 function renderQuoteResults(){
   const box = document.getElementById('quoteResults');
@@ -1692,30 +1892,68 @@ function renderQuoteResults(){
   box.style.display='block';
   box.innerHTML = read.map(s=>{
     const d = s.data, tot = supplierTotal(d), m = d.quote_meta||{};
+    const docs = d.documents||[], groups = d.groups||[], anns = d.annotations||[];
+    const flags = quoteFlags(d);
+    const high = flags.filter(f=>f.severity==='high');
     const byCat = {};
     (d.items||[]).forEach(it=>{ byCat[it.category] = (byCat[it.category]||0)+1; });
-    const flags = [];
-    const pk = (d.items||[]).filter(it=>it.is_package).length;
-    const qu = (d.items||[]).filter(it=>it.qty_unclear).length;
-    const sb = (d.items||[]).filter(it=>it.substitution_language).length;
-    if(pk) flags.push(pk+' package/lot line'+(pk===1?'':'s'));
-    if(qu) flags.push(qu+(qu===1?' unclear quantity':' unclear quantities'));
-    if(sb) flags.push(sb+' line'+(sb===1?'':'s')+' with substitution wording');
     return '<div class="card">'+
       '<div class="collapsible-head open" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i><h2>'+esc(s.name)+'</h2>'+
-        '<span class="collapsible-summary">'+(d.items||[]).length+' lines &middot; '+(tot.value?money(tot.value):'no total printed')+(tot.derived&&tot.value?' (added up from the lines)':'')+'</span></div>'+
+        '<span class="collapsible-summary">'+(d.items||[]).length+' lines'+(groups.length?(' in '+groups.length+' group'+(groups.length===1?'':'s')):'')+
+        ' &middot; '+(tot.value?money(tot.value):'no total')+(high.length?(' &middot; '+high.length+' thing'+(high.length===1?'':'s')+' to resolve'):'')+'</span></div>'+
       '<div class="collapsible-body" style="display:block">'+
-        '<div class="qsum">'+
-          Object.keys(byCat).map(c=>'<div class="qsumchip"><b>'+byCat[c]+'</b>'+esc(c)+'</div>').join('')+
-        '</div>'+
-        (flags.length ? '<div class="note warn" style="margin:14px 0 0"><b>Worth a look on this quote:</b> '+esc(flags.join(', '))+'. These are the lines the comparison will not be able to take at face value.</div>' : '')+
-        (m.exclusions&&m.exclusions.length ? '<div class="note err" style="margin:14px 0 0"><b>Excluded by this quote:</b><ul style="margin:6px 0 0;padding-left:20px">'+m.exclusions.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>' : '')+
-        '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--muted)">'+
-          [['Quote #',m.quote_number],['Dated',m.quote_date],['Valid until',m.valid_until],['Lead time',m.lead_time],['Freight',m.freight],['Tax',m.tax]]
-            .filter(p=>p[1]).map(p=>'<span><b style="color:var(--ink)">'+p[0]+':</b> '+esc(p[1])+'</span>').join('')+
-        '</div>'+
-        '<div style="margin-top:14px"><button class="btnsm" onclick="toggleLines(this,\''+s.id+'\')" type="button">Show the '+(d.items||[]).length+' extracted line'+((d.items||[]).length===1?'':'s')+'</button></div>'+
-        '<div id="suplines-'+s.id+'" style="display:none;margin-top:12px">'+quoteLinesTable(d)+'</div>'+
+
+      (docs.length>1 ? '<div class="note err"><b>This file holds '+docs.length+' separate quotes.</b><ul style="margin:6px 0 0;padding-left:20px">'+
+        docs.map(x=>'<li><b>'+esc(x.label||x.quote_number)+'</b>'+(x.pages?(' &middot; pages '+esc(x.pages)):'')+(x.kind?(' &middot; '+esc(x.kind)):'')+'</li>').join('')+
+        '</ul><div style="margin-top:6px">They are kept apart rather than merged into one number, because they usually are not meant to be added together.</div></div>' : '')+
+
+      (anns.length ? '<div class="note warn"><b>Handwriting on this quote:</b><ul style="margin:6px 0 0;padding-left:20px">'+
+        anns.map(a=>'<li>&ldquo;'+esc(a.text)+'&rdquo;'+(a.page?(' <span class="pricebox">page '+a.page+'</span>'):'')+
+          (a.meaning?('<div class="itemsub" style="margin-top:2px">'+esc(a.meaning)+'</div>'):'')+'</li>').join('')+
+        '</ul><div style="margin-top:6px">Nothing on screen has been adjusted by any of it. A handwritten figure is evidence of a price, not a price.</div></div>' : '')+
+
+      '<div class="qsum">'+Object.keys(byCat).map(c=>'<div class="qsumchip"><b>'+byCat[c]+'</b>'+esc(c)+'</div>').join('')+'</div>'+
+
+      (groups.length ? '<div style="margin-top:14px"><div class="grp-h" style="margin-bottom:8px"><span class="t">Priced by assembly</span>'+
+        '<span class="c">'+groups.length+' group'+(groups.length===1?'':'s')+'</span></div>'+
+        '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:90px">Tag</th><th>What it covers</th>'+
+        '<th style="width:130px">Subtotal</th><th style="width:150px">Basis</th></tr></thead><tbody>'+
+        groups.map(g=>{
+          const lines = (d.items||[]).filter(it=>(it.group_tag||'').toLowerCase()===g.tag.toLowerCase());
+          const bad = !num(g.subtotal) || g.qty_basis!=='job total' || g.price_basis==='list';
+          return '<tr'+(bad?' class="hasissue"':'')+'><td class="qtybox">'+esc(g.tag)+'</td>'+
+            '<td><div class="itemdesc">'+esc(g.description || (lines.length+' component'+(lines.length===1?'':'s')))+'</div>'+
+            (lines.length?'<div class="itemsub">'+esc(lines.slice(0,3).map(l=>l.description).join(' · ').slice(0,120))+(lines.length>3?' …':'')+'</div>':'')+
+            (g.plus_shipping?'<div class="itemsub" style="color:var(--rust)">plus shipping</div>':'')+
+            (g.notes?'<div class="why">'+esc(g.notes)+'</div>':'')+'</td>'+
+            '<td class="qtybox">'+(num(g.subtotal)?money(g.subtotal):'<span class="mm miss">none</span>')+(g.handwritten?' <span class="mm sub">handwritten</span>':'')+'</td>'+
+            '<td>'+(g.qty_basis==='job total'?'<span class="mm exact">job total</span>':g.qty_basis==='per assembly'?'<span class="mm sub">per assembly</span>':'<span class="mm unclear">basis unclear</span>')+
+              (g.price_basis==='list'?'<div class="mm sub" style="margin-top:3px">list price</div>':'')+'</td></tr>';
+        }).join('')+'</tbody></table></div></div>' : '')+
+
+      (flags.length ? '<div style="margin-top:14px">'+flags.map(f=>
+        '<div class="exc '+esc(f.severity)+'" style="margin-bottom:8px"><div class="body">'+
+          '<div class="headline">'+esc(f.headline)+'</div>'+
+          (f.detail?'<div class="detail">'+esc(f.detail)+'</div>':'')+
+          (f.ask?'<div class="ask">'+esc(f.ask)+'</div>':'')+
+          '<div class="metaline"><span class="sev '+esc(f.severity)+'">'+esc(f.severity)+'</span><span class="kind">'+esc(f.kind)+'</span></div>'+
+        '</div></div>').join('')+
+        '<p class="hint">These come straight out of the quote itself, before any comparison. They carry through to the exceptions tab when you run the comparison.</p></div>' : '')+
+
+      ((m.exclusions&&m.exclusions.length) ? '<div class="note err" style="margin-top:14px"><b>Excluded by this quote:</b><ul style="margin:6px 0 0;padding-left:20px">'+
+        m.exclusions.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>' : '')+
+      ((m.notes&&m.notes.length) ? '<div class="note info" style="margin-top:0"><b>Conditions on this quote:</b><ul style="margin:6px 0 0;padding-left:20px">'+
+        m.notes.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>' : '')+
+
+      '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--muted)">'+
+        [['Quote #',m.quote_number],['Dated',m.quote_date],['Valid until',m.valid_until],['Lead time',m.lead_time],['Freight',m.freight],['Tax',m.tax],['Price basis',m.price_basis],['Multiplier',m.multiplier]]
+          .filter(pr=>pr[1]).map(pr=>'<span><b style="color:var(--ink)">'+pr[0]+':</b> '+esc(pr[1])+'</span>').join('')+
+      '</div>'+
+      '<div class="note '+(tot.derived?'warn':'info')+'" style="margin-top:12px"><b>'+(tot.value?money(tot.value):'No total')+'</b> &middot; '+esc(tot.basis)+
+        (tot.derived?'. The quote does not print one total for all of this, so this figure is arithmetic done here, not something the supplier committed to.':'.')+
+        ((m.multiplier)?' It also takes no account of the multiplier above.':'')+'</div>'+
+      '<div style="margin-top:12px"><button class="btnsm" onclick="toggleLines(this,\''+s.id+'\')" type="button">Show the '+(d.items||[]).length+' extracted line'+((d.items||[]).length===1?'':'s')+'</button></div>'+
+      '<div id="suplines-'+s.id+'" style="display:none;margin-top:12px">'+quoteLinesTable(d)+'</div>'+
       '</div></div>';
   }).join('');
 }
@@ -1726,15 +1964,21 @@ function toggleLines(btn, id){
   btn.textContent = open ? btn.textContent.replace('Hide','Show') : btn.textContent.replace('Show','Hide');
 }
 function quoteLinesTable(d){
+  const multiDoc = (d.documents||[]).length > 1;
   return '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-    '<th style="width:60px">Line</th><th>Description</th><th style="width:110px">Qty</th><th style="width:150px">Mfr / Model</th><th style="width:100px">Unit</th><th style="width:110px">Extended</th></tr></thead><tbody>'+
-    (d.items||[]).map(it=>'<tr'+(it.is_package||it.qty_unclear?' class="hasissue"':'')+'>'+
-      '<td class="pricebox">'+esc(it.line_ref)+'</td>'+
+    (multiDoc?'<th style="width:110px">Quote</th>':'')+
+    '<th style="width:70px">Tag</th><th>Description</th><th style="width:120px">Qty</th><th style="width:150px">Mfr / Model</th><th style="width:100px">Unit</th><th style="width:110px">Extended</th></tr></thead><tbody>'+
+    (d.items||[]).map(it=>'<tr'+(it.is_package||it.qty_unclear||it.substitution_language?' class="hasissue"':'')+'>'+
+      (multiDoc?'<td class="pricebox">'+esc(it.document)+'</td>':'')+
+      '<td class="qtybox">'+esc(it.group_tag||it.line_ref)+'</td>'+
       '<td><div class="itemdesc">'+esc(it.description)+'</div>'+
-        '<div class="itemsub">'+esc(it.category)+(it.is_package?' &middot; PACKAGE':'')+(it.substitution_language?' &middot; "'+esc(it.substitution_language)+'"':'')+'</div></td>'+
-      '<td class="qtybox">'+(it.qty?esc(it.qty):'')+' '+esc(it.uom)+(it.qty_unclear?' <span class="mm unclear">?</span>':'')+'</td>'+
+        '<div class="itemsub">'+esc(it.category)+(it.is_package?' &middot; PACKAGE':'')+(it.handwritten?' &middot; HANDWRITTEN':'')+'</div>'+
+        (it.substitution_language?'<div class="why" style="color:var(--amber)">"'+esc(it.substitution_language)+'"</div>':'')+
+        (it.notes?'<div class="why">'+esc(it.notes)+'</div>':'')+'</td>'+
+      '<td class="qtybox">'+(it.qty?esc(it.qty):'')+' '+esc(it.uom)+(it.qty_unclear?' <span class="mm unclear">?</span>':'')+
+        (it.qty_basis==='per assembly'?'<div class="itemsub">per assembly</div>':it.qty_basis==='unclear'?'<div class="itemsub">basis unclear</div>':'')+'</td>'+
       '<td class="pricebox">'+esc([it.manufacturer,it.model].filter(Boolean).join(' '))+'</td>'+
-      '<td class="pricebox">'+money(it.unit_price)+'</td>'+
+      '<td class="pricebox">'+money(it.unit_price)+(it.price_basis==='list'&&it.unit_price?'<div class="itemsub">list</div>':'')+'</td>'+
       '<td class="pricebox">'+money(it.extended_price)+'</td></tr>').join('')+
     '</tbody></table></div>';
 }
@@ -2046,6 +2290,10 @@ function buildBidReqFrom(latestByPhase){
     kickoff_meta: kickoff ? { verdict:(kickoff.recommendation||{}).verdict||'', bid_due:kickoff.bid_due||'', scores:kickoff.scores||null } : null,
     at:new Date().toISOString(),
     _pool: pool.length, _dupes: dupes, _unique: unique.length, _dropped: dropped.length,
+    // The whole discarded list, kept so it can be downloaded and audited. Rebuilt free from the
+    // Worker on every load, so it is deliberately stripped out before saving rather than
+    // pushing a few hundred KB of text into the database on every write.
+    _dropped_full: dropped,
     _dropped_sample: dropped.slice(0, 80).map(d=>d.requirement).filter(Boolean),
     _had_kickoff: !!kickoff,
     _kickoff_total: kickoff ? ((kickoff.top_risks||[]).length+(kickoff.conflicts||[]).length+(kickoff.open_items||[]).length) : 0 };
@@ -2085,7 +2333,12 @@ async function runRequirementTriage(btn, signal, onProgress){
     const idx = new Set((out.keep||[]).map(n=>parseInt(n,10)).filter(n=>n>=1 && n<=slice.length));
     idx.forEach(n=>kept.push(slice[n-1]));
   }
+  const keptKeys = new Set(kept.map(r=>reqKey(r.requirement)));
   bidReq.triaged = kept;
+  bidReq.triage_dropped = src.filter(r=>!keptKeys.has(reqKey(r.requirement)));
+  // Persisted as keys rather than as a second copy of the rows: the findings themselves are
+  // rebuilt free from the Worker on every load, so all that has to survive is the decision.
+  bidReq.triage_keys = Array.from(keptKeys);
   bidReq.triage_meta = { at:new Date().toISOString(), from: src.length, kept: kept.length, batches };
   renderReqOut();
   renderReadiness();
@@ -2145,7 +2398,9 @@ function renderReqOut(){
         ? '<div class="note warn" style="margin-top:0"><b>Too many to check one by one.</b> '+(f.length+k.length)+' requirements is about '+Math.ceil((f.length+k.length)/25)+' passes on the coverage check. Word matching can tell that a line mentions pipe, but not whether it says "furnish Type L copper" or "support piping at 10 foot intervals" — only one of those is a takeoff line. <b>Press Narrow to real material items</b> and a cheap pass at 150 lines a time sorts that out for a fraction of the cost. The comparison will do it for you if you skip it, but doing it here lets you look at the result first.</div>'
         : ''))+
     '<div style="margin-top:6px"><button class="btnsm" onclick="toggleLines(this,\'req\')" type="button">Show the '+effective+' item'+(effective===1?'':'s')+' being checked</button>'+
-      ((bidReq._dropped||0) ? ' <button class="btnsm" onclick="toggleLines(this,\'reqdrop\')" type="button">Show what was left out ('+bidReq._dropped+')</button>' : '')+'</div>'+
+      ((bidReq._dropped||0) ? ' <button class="btnsm" onclick="toggleLines(this,\'reqdrop\')" type="button">Show what was left out ('+bidReq._dropped+')</button>' : '')+
+      ' <button class="btnsm" onclick="downloadExcludedExcel(this)" type="button">Download everything left out</button>'+
+      ' <button class="btnsm" onclick="downloadRequirementsExcel(this)" type="button">Download the '+effective+' being checked</button>'+'</div>'+
     ((bidReq._dropped||0) ? '<div id="suplines-reqdrop" style="display:none;margin-top:12px">'+
       '<div class="note info" style="margin:0 0 10px">These were read as not being about material, so the takeoff is not checked against them. Submittals, bonding, insurance, warranty terms and execution requirements all land here and that is correct. If you spot something in this list that a takeoff really should carry a line for, say so and the filter gets fixed.'+
       ((bidReq._dropped > (bidReq._dropped_sample||[]).length) ? ' Showing the first '+(bidReq._dropped_sample||[]).length+' of '+bidReq._dropped+'.' : '')+'</div>'+
@@ -2287,7 +2542,14 @@ async function runCompare(){
           category: cat,
           takeoff_items: (takeoffData.items||[]).filter(it=>catOf(it)===cat),
           scheduled_items: ((specBasis&&specBasis.items)||[]).filter(it=>catOf(it)===cat),
-          suppliers: read.map(s=>({ supplier:s.name, items:(s.data.items||[]).filter(it=>catOf(it)===cat) }))
+          suppliers: read.map(s=>{
+            const items = (s.data.items||[]).filter(it=>catOf(it)===cat);
+            const tags = new Set(items.map(it=>(it.group_tag||'').toLowerCase()).filter(Boolean));
+            return { supplier:s.name, items,
+              groups: (s.data.groups||[]).filter(g=>tags.has(String(g.tag||'').toLowerCase())),
+              price_basis: (s.data.quote_meta&&s.data.quote_meta.price_basis)||'',
+              multiplier: (s.data.quote_meta&&s.data.quote_meta.multiplier)||'' };
+          })
         };
         const quoted = payload.suppliers.reduce((a,x)=>a+x.items.length,0);
         prog.textContent = 'Quotes, category '+(i+1)+' of '+cats.length+': '+cat+' — '+payload.takeoff_items.length+' takeoff line'+(payload.takeoff_items.length===1?'':'s')+' against '+quoted+' quoted line'+(quoted===1?'':'s')+'…';
@@ -2364,11 +2626,20 @@ async function runCompare(){
       all._run.coverage_checked = reqs.length;
     }
 
+    // Everything quoteFlags() found reading the documents themselves goes in too. These are
+    // computed in plain code rather than asked of the model, so they are the same every run and
+    // they do not depend on a category pass having succeeded.
+    read.forEach(sup=>{
+      quoteFlags(sup.data).forEach(f=>{
+        all.exceptions.push({ kind:f.kind, severity:f.severity, suppliers:[sup.name], lane:'quote',
+          item:'This quote as a whole', category:'Quote terms', headline:f.headline, detail:f.detail, ask:f.ask, _fromDoc:true });
+      });
+    });
     all._run.status = all._run.failed.length ? 'partial' : 'complete';
     all.summary = buildSummary(all, read);
     cmpData = all;
     prog.textContent = 'Done. '+all.rows.length+' item rows, '+(all.coverage.checks||[]).length+' coverage checks, '+all.exceptions.length+' exception'+(all.exceptions.length===1?'':'s')+'.';
-    renderCompare(); renderExceptions(); updateCounts();
+    renderCompare(); renderExceptions(); renderBuySheet(); updateCounts();
     saveToCloud('p2_comparison', cmpData);
   }catch(e){
     if(e.name === 'AbortError'){
@@ -2549,6 +2820,7 @@ function toggleExcDone(i){
   const x = (cmpData.exceptions||[])[i]; if(!x) return;
   x._done = !x._done;
   renderExceptions();
+  renderBuySheet();
   saveToCloud('p2_comparison', cmpData);
 }
 function renderExceptions(){
@@ -2606,7 +2878,365 @@ function renderExceptions(){
       '<button class="btn2" onclick="downloadCompareExcel(this)" type="button">Download Excel</button></div>';
 }
 
+
+/* =========================== BUY SHEET (TAB 6) ===========================
+   The question this tab answers is not "what is wrong with these quotes", it
+   is "which of these prices can honestly be put next to each other". Every
+   number here is computed in plain arithmetic from data already on screen.
+   Nothing is asked of the model, so any figure can be checked by hand, and
+   the tab never names a winner: it shows low, high and spread and stops.
+   ====================================================================== */
+// Units only compare when they mean the same thing. FT and LF do. FT and LENGTH
+// do not, and pretending otherwise is how a bid ends up out by a factor of twenty.
+const UOM_SYNONYMS = {
+  ft:'ft', foot:'ft', feet:'ft', lf:'ft', 'lin ft':'ft', 'linft':'ft', "'":'ft',
+  ea:'ea', each:'ea', pc:'ea', pcs:'ea', piece:'ea', pieces:'ea', unit:'ea', units:'ea',
+  lot:'lot', ls:'lot', 'lump sum':'lot',
+  box:'box', bx:'box', roll:'roll', length:'length', lgth:'length', stick:'length',
+  c:'per hundred', m:'per thousand', hr:'hr', hour:'hr', hours:'hr'
+};
+function uomKey(u){
+  const t = String(u||'').toLowerCase().replace(/[^a-z' ]/g,'').trim();
+  if(!t) return '';
+  return UOM_SYNONYMS[t] || t;
+}
+// Quote-level reasons a supplier's whole quote, or one tagged assembly on it, cannot be
+// price-compared no matter how well the description matched.
+function supplierBlockers(sup, row){
+  const out = [];
+  const d = sup.data || {};
+  const m = d.quote_meta || {};
+  if((m.multiplier||'').trim()) out.push('a multiplier applies to this quote and has not been applied');
+  if(m.price_basis === 'list') out.push('this quote is list pricing, not net');
+  const tag = String(row.tag||'').trim().toLowerCase();
+  if(tag){
+    const g = (d.groups||[]).find(x=>String(x.tag||'').trim().toLowerCase()===tag);
+    if(g){
+      if(g.price_basis === 'list') out.push('the '+g.tag+' group is priced off list');
+      if(g.qty_basis === 'per assembly') out.push('the '+g.tag+' group is priced per assembly, not for the job quantity');
+      else if(g.qty_basis !== 'job total') out.push('the '+g.tag+' group does not say whether its price is per assembly or for the job');
+      if(g.plus_shipping) out.push('the '+g.tag+' group is plus shipping while others are not');
+    }
+  }
+  return out;
+}
+function buildBuySheet(){
+  if(!cmpData || !(cmpData.rows||[]).length) return null;
+  const read = suppliers.filter(s=>s.data);
+  const byName = {};
+  read.forEach(s=>{ byName[s.name] = s; });
+  const names = read.map(s=>s.name);
+
+  const lines = (cmpData.rows||[]).map(row=>{
+    const reqQty = num(row.required_qty);
+    const reqU = uomKey(row.required_uom);
+    const offers = names.map(n=>{
+      const c = (row.suppliers||[]).find(x=>x.supplier===n) || { match:'missing', confidence:'high' };
+      const sup = byName[n];
+      const o = { supplier:n, match:c.match||'missing', confidence:c.confidence||'', quoted_as:c.quoted_as||'',
+                  qty:num(c.qty), uom:c.uom||'', unit_price:num(c.unit_price), extended_price:num(c.extended_price),
+                  why:c.why||'', blocked:[], qty_state:'', qty_delta:0, price:null, price_note:'' };
+      if(o.match === 'missing'){ o.qty_state = 'not quoted'; return o; }
+
+      // quantity check, and it refuses to subtract across units that do not mean the same thing
+      const oU = uomKey(o.uom);
+      if(!reqQty) o.qty_state = 'no takeoff quantity';
+      else if(!oU || !reqU) o.qty_state = 'units not stated';
+      else if(oU !== reqU) o.qty_state = 'units differ';
+      else if(!o.qty) o.qty_state = 'no quantity quoted';
+      else if(o.qty < reqQty){ o.qty_state = 'short'; o.qty_delta = reqQty - o.qty; }
+      else if(o.qty > reqQty){ o.qty_state = 'over'; o.qty_delta = o.qty - reqQty; }
+      else o.qty_state = 'ok';
+
+      if(o.match === 'substitution') o.blocked.push('this is a substitution, so it is not the same product');
+      if(o.match === 'unclear') o.blocked.push('what this line covers could not be established');
+      if(o.confidence === 'low') o.blocked.push('the match itself is low confidence');
+      if(o.qty_state === 'units differ') o.blocked.push('quoted in '+(o.uom||'?')+' against a takeoff in '+(row.required_uom||'?'));
+      if(sup) supplierBlockers(sup, row).forEach(bk=>o.blocked.push(bk));
+
+      // a price that can stand next to another price, extended to the takeoff quantity where
+      // that can be done safely and labelled when it has been
+      if(!o.blocked.length && (oU === reqU || (!reqQty && o.extended_price))){
+        if(reqQty && o.qty === reqQty && o.extended_price){ o.price = o.extended_price; o.price_note = 'as quoted'; }
+        else if(reqQty && o.unit_price){ o.price = o.unit_price * reqQty; o.price_note = (o.qty===reqQty?'as quoted':'their unit price extended to our '+reqQty+' '+(row.required_uom||'')); }
+        else if(o.extended_price && (!reqQty || o.qty === reqQty)){ o.price = o.extended_price; o.price_note = 'as quoted'; }
+        else if(o.extended_price && o.qty){ o.price = (o.extended_price / o.qty) * reqQty; o.price_note = 'worked back from their extended price to our '+reqQty+' '+(row.required_uom||''); }
+        else o.blocked.push('no usable price on the line');
+      }
+      if(o.price !== null && !(o.price > 0)){ o.price = null; o.blocked.push('no usable price on the line'); }
+      return o;
+    });
+
+    const priced = offers.filter(o=>o.price !== null);
+    const quotedButBlocked = offers.filter(o=>o.price === null && o.match !== 'missing');
+    let state, blockers = [];
+    if(priced.length >= 2) state = 'head_to_head';
+    else if(priced.length === 1) state = 'sole_source';
+    else if(quotedButBlocked.length) { state = 'not_comparable'; blockers = Array.from(new Set(quotedButBlocked.flatMap(o=>o.blocked))); }
+    else state = 'nobody';
+
+    const sorted = priced.slice().sort((a,b)=>a.price-b.price);
+    const low = sorted[0] || null, high = sorted[sorted.length-1] || null;
+    const spread = (low && high && sorted.length>1) ? (high.price - low.price) : 0;
+    return { category:row.category||'Other', item:row.item||'', takeoff_line:row.takeoff_line||row.item||'',
+      tag:row.tag||'', required_qty:reqQty, required_uom:row.required_uom||'', required_source:row.required_source||'',
+      offers, state, blockers, low, high, spread,
+      spread_pct: (low && spread) ? (spread/low.price*100) : 0 };
+  });
+
+  // Roll-up A: take the cheapest comparable price on every line. Sole-source lines are in
+  // there too, because you have to buy those from the only supplier who priced them.
+  const split = { total:0, lines:0, sole:0, not_comparable:0, nobody:0 };
+  lines.forEach(l=>{
+    if(l.state === 'head_to_head' || l.state === 'sole_source'){ split.total += l.low.price; split.lines++; if(l.state==='sole_source') split.sole++; }
+    else if(l.state === 'not_comparable') split.not_comparable++;
+    else split.nobody++;
+  });
+
+  // Roll-up B: each supplier as a whole package. Lines they did not price are filled at the
+  // best price anyone else gave, and that fill is reported separately rather than buried,
+  // because it is the only honest way to put two different scopes next to each other.
+  const packages = names.map(n=>{
+    let covered = 0, coveredLines = 0, gapFill = 0, gapLines = 0, unpriceable = 0;
+    lines.forEach(l=>{
+      const mine = l.offers.find(o=>o.supplier===n);
+      if(mine && mine.price !== null){ covered += mine.price; coveredLines++; return; }
+      if(l.low){ gapFill += l.low.price; gapLines++; }
+      else unpriceable++;
+    });
+    return { supplier:n, covered, coveredLines, gapFill, gapLines, unpriceable,
+      comparable: covered + gapFill, total_lines: lines.length,
+      mostly_not_theirs: gapFill > covered };
+  // Ordered by how much of the job each supplier actually priced, not by who came out cheapest.
+  // Sorting these by price would rank them, and a ranking is a recommendation.
+  }).sort((a,b)=>b.coveredLines-a.coveredLines || a.supplier.localeCompare(b.supplier));
+
+  const openHigh = (cmpData.exceptions||[]).filter(x=>x.severity==='high' && !x._done).length;
+  return { lines, split, packages, names, openHigh,
+    counts: {
+      head_to_head: lines.filter(l=>l.state==='head_to_head').length,
+      sole_source: lines.filter(l=>l.state==='sole_source').length,
+      not_comparable: lines.filter(l=>l.state==='not_comparable').length,
+      nobody: lines.filter(l=>l.state==='nobody').length
+    } };
+}
+const BUY_STATE = {
+  head_to_head: ['h2h','HEAD TO HEAD'], sole_source:['sole','SOLE SOURCE'],
+  not_comparable:['block','NOT COMPARABLE'], nobody:['none','NOBODY QUOTED IT']
+};
+function qtyCellHtml(o, l){
+  if(o.match === 'missing') return '<span class="qchk bad">not quoted</span>';
+  const q = (o.qty? o.qty : '?')+' '+(o.uom||'');
+  if(o.qty_state === 'ok') return '<span class="qchk ok">'+esc(q)+' &check;</span>';
+  if(o.qty_state === 'short') return '<span class="qchk short">'+esc(q)+'<br>short '+o.qty_delta+' '+esc(l.required_uom)+'</span>';
+  if(o.qty_state === 'over') return '<span class="qchk over">'+esc(q)+'<br>over by '+o.qty_delta+'</span>';
+  if(o.qty_state === 'units differ') return '<span class="qchk bad">'+esc(q)+'<br>units differ, not compared</span>';
+  return '<span class="qchk bad">'+esc(q)+'<br>'+esc(o.qty_state)+'</span>';
+}
+function renderBuySheet(){
+  const box = document.getElementById('buyResults');
+  const empty = document.getElementById('buyEmpty');
+  const bs = buildBuySheet();
+  if(!bs){
+    box.style.display='none'; empty.style.display='block';
+    empty.innerHTML = '<p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 4.</p>';
+    return;
+  }
+  empty.style.display='none'; box.style.display='block';
+  const c = bs.counts;
+
+  let html = takeoffStaleBanner();
+  if(bs.openHigh) html += '<div class="note warn"><b>'+bs.openHigh+' high severity exception'+(bs.openHigh===1?' is':'s are')+' still open.</b> '+
+    (bs.openHigh===1
+      ? 'That is usually why a line below cannot be compared. Clearing it on tab 5 is what moves a line into the head-to-head column, and nothing here is final until it is cleared.'
+      : 'Those are usually why the not-comparable lines below cannot be compared. Clearing them on tab 5 is what moves lines into the head-to-head column, and nothing here is final until they are.')+'</div>';
+
+  html += '<div class="summary">'+
+    '<div class="proj"><div class="pl">Project</div><div class="pv">'+esc(projectName()||'Untitled project')+'</div>'+
+      '<div style="font-size:12px;color:#93AEC7;margin-top:6px">'+bs.lines.length+' takeoff lines &middot; '+bs.names.length+' supplier'+(bs.names.length===1?'':'s')+' &middot; every figure below is arithmetic, not AI</div></div>'+
+    '<div class="stat good"><div class="n">'+c.head_to_head+'</div><div class="l">Head to head</div></div>'+
+    '<div class="stat"><div class="n">'+c.sole_source+'</div><div class="l">Sole source</div></div>'+
+    '<div class="stat warn"><div class="n">'+c.not_comparable+'</div><div class="l">Not comparable</div></div>'+
+    '<div class="stat warn"><div class="n">'+c.nobody+'</div><div class="l">Nobody quoted</div></div>'+
+  '</div>';
+
+  // --- the two roll-ups, side by side ---
+  html += '<div class="grp"><div class="grp-h"><span class="t">Two ways to add this up</span>'+
+    '<span class="c">neither is a recommendation &middot; ordered by how much each supplier actually priced</span></div>'+
+    '<div class="pkg">'+
+      '<div class="pkgcard" style="border-top-color:var(--navy)">'+
+        '<div class="pn">Split the award</div>'+
+        '<div class="pv">'+money(bs.split.total)+'</div>'+
+        '<div class="pl">cheapest comparable price on each line</div>'+
+        '<div class="prow"><span>Lines in that figure</span><span>'+bs.split.lines+' of '+bs.lines.length+'</span></div>'+
+        '<div class="prow"><span>Of those, sole source</span><span>'+bs.split.sole+'</span></div>'+
+        '<div class="prow"><span>Not in the figure</span><span>'+(bs.split.not_comparable+bs.split.nobody)+' line'+((bs.split.not_comparable+bs.split.nobody)===1?'':'s')+'</span></div>'+
+        '<div class="scflag" style="color:var(--muted);font-weight:400">Buying every line from whoever is cheapest on it. Real, but it is several POs and several deliveries, and '+(bs.split.not_comparable+bs.split.nobody)+' line'+((bs.split.not_comparable+bs.split.nobody)===1?' is':'s are')+' not in this number at all.</div>'+
+      '</div>'+
+      bs.packages.map(pk=>'<div class="pkgcard"'+(pk.mostly_not_theirs?' style="border-top-color:var(--rust)"':'')+'>'+
+        '<div class="pn">All from '+esc(pk.supplier)+'</div>'+
+        '<div class="pv">'+money(pk.comparable)+'</div>'+
+        '<div class="pl">their prices, plus their gaps filled elsewhere</div>'+
+        '<div class="prow"><span>Their own lines</span><span>'+money(pk.covered)+' &middot; '+pk.coveredLines+'</span></div>'+
+        '<div class="prow"><span>Gaps filled elsewhere</span><span>'+(pk.gapLines?money(pk.gapFill)+' &middot; '+pk.gapLines:'none')+'</span></div>'+
+        (pk.unpriceable?'<div class="prow"><span>Nobody can price</span><span>'+pk.unpriceable+' line'+(pk.unpriceable===1?'':'s')+'</span></div>':'')+
+        (pk.mostly_not_theirs ? '<div class="scflag">Most of this figure is not their price. Read it as what the job would cost if you bought from them and covered the rest elsewhere, not as their number.</div>' : '')+
+        '<div class="scflag" style="color:var(--muted);font-weight:400">'+(pk.gapLines
+          ? ('They did not price '+pk.gapLines+' line'+(pk.gapLines===1?'':'s')+', so those are filled at the best price anyone gave. That part is not a quote from them.')
+          : 'They priced every comparable line.')+'</div>'+
+      '</div>').join('')+
+    '</div>'+
+    '<div class="note info" style="margin-top:0">The package figures are only comparable to each other because the gaps have been filled at someone else&rsquo;s price. That filled portion is not a commitment from that supplier: it is what it would cost you to make their quote whole. The split figure ignores the cost of running several POs. Both are arithmetic, not advice.</div>'+
+  '</div>';
+
+  // --- line by line ---
+  const byCat = {};
+  bs.lines.forEach(l=>{ (byCat[l.category] = byCat[l.category]||[]).push(l); });
+  const order = { head_to_head:0, sole_source:1, not_comparable:2, nobody:3 };
+  Object.keys(byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).forEach(cat=>{
+    const rows = byCat[cat].slice().sort((a,b)=>(order[a.state]??4)-(order[b.state]??4));
+    html += '<div class="grp"><div class="grp-h"><span class="t">'+esc(cat)+'</span><span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+'</span></div>'+
+      '<div class="tablewrap"><table class="matrix"><thead><tr>'+
+        '<th style="min-width:200px">Takeoff line</th><th style="width:120px">State</th>'+
+        bs.names.map(n=>'<th class="supcol" style="min-width:150px">'+esc(n)+'</th>').join('')+
+        '<th class="supcol" style="width:160px">Low / high / spread</th></tr></thead><tbody>'+
+      rows.map(l=>{
+        const st = BUY_STATE[l.state];
+        return '<tr'+(l.state==='head_to_head'?'':' class="hasissue"')+'>'+
+          '<td><div class="itemdesc">'+esc(l.takeoff_line)+'</div>'+
+            '<div class="itemsub">'+[l.tag, (l.required_qty? l.required_qty+' '+l.required_uom : 'no quantity')].filter(Boolean).map(esc).join(' · ')+'</div></td>'+
+          '<td><span class="st '+st[0]+'">'+st[1]+'</span>'+
+            (l.blockers.length?'<div class="why">'+esc(l.blockers.slice(0,2).join('; '))+(l.blockers.length>2?'…':'')+'</div>':'')+'</td>'+
+          bs.names.map(n=>{
+            const o = l.offers.find(x=>x.supplier===n);
+            if(!o || o.match==='missing') return '<td class="supcell"><span class="mm miss">MISSING</span></td>';
+            return '<td class="supcell">'+
+              (o.price!==null ? '<div class="qtybox" style="font-size:13px">'+money(o.price)+'</div><div class="itemsub">'+esc(o.price_note)+'</div>'
+                              : '<span class="mm '+(o.match==='substitution'?'sub':'unclear')+'">'+(o.match==='substitution'?'SUB':'no price')+'</span>')+
+              '<div style="margin-top:3px">'+qtyCellHtml(o,l)+'</div>'+
+              (o.blocked.length?'<div class="why">'+esc(o.blocked[0])+'</div>':'')+
+            '</td>';
+          }).join('')+
+          '<td class="supcell">'+(l.low
+            ? '<div class="lowhigh"><span class="lo">'+money(l.low.price)+'</span> '+esc(l.low.supplier)+'</div>'+
+              (l.high && l.spread ? '<div class="lowhigh"><span class="hi">'+money(l.high.price)+'</span> '+esc(l.high.supplier)+'</div>'+
+                '<div class="lowhigh"><span class="sp">'+money(l.spread)+'</span> apart ('+l.spread_pct.toFixed(0)+'%)</div>' : '<div class="itemsub">only one comparable price</div>')
+            : '<span class="itemsub">nothing comparable</span>')+'</td>'+
+        '</tr>';
+      }).join('')+'</tbody></table></div></div>';
+  });
+
+  html += '<div class="resbar">'+
+    '<button class="btn2 primary" onclick="downloadBuyExcel(this)" type="button">Download the buy sheet</button>'+
+    '<button class="btn2" onclick="setPageTab(\'exceptions\')" type="button">Go clear the exceptions</button>'+
+  '</div>';
+  box.innerHTML = html;
+}
+function downloadBuyExcel(btn){
+  const bs = buildBuySheet();
+  if(!bs){ alert('Run the comparison first.'); return; }
+  if(typeof XLSX==='undefined'){ alert('The Excel library did not load. Check the connection and reload the page.'); return; }
+  const wb = XLSX.utils.book_new();
+  const head = ['Category','Takeoff line','Tag','Qty','UOM','State','What blocks the comparison'];
+  bs.names.forEach(n=>head.push(n+' price', n+' basis', n+' qty', n+' qty check', n+' blocked by'));
+  head.push('Low','Low supplier','High','High supplier','Spread','Spread %');
+  const aoa = [head];
+  bs.lines.forEach(l=>{
+    const r = [l.category, l.takeoff_line, l.tag, l.required_qty||'', l.required_uom, BUY_STATE[l.state][1], l.blockers.join(' | ')];
+    bs.names.forEach(n=>{
+      const o = l.offers.find(x=>x.supplier===n) || {};
+      r.push(o.price!==null&&o.price!==undefined?o.price:'', o.price_note||'', o.qty||'', o.qty_state||'', (o.blocked||[]).join(' | '));
+    });
+    r.push(l.low?l.low.price:'', l.low?l.low.supplier:'', l.high?l.high.price:'', l.high?l.high.supplier:'', l.spread||'', l.spread?Number(l.spread_pct.toFixed(1)):'');
+    aoa.push(r);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:16},{wch:40},{wch:8},{wch:8},{wch:8},{wch:16},{wch:44}].concat(
+    bs.names.flatMap(()=>[{wch:12},{wch:26},{wch:8},{wch:16},{wch:34}]),
+    [{wch:12},{wch:16},{wch:12},{wch:16},{wch:11},{wch:10}]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Buy sheet');
+
+  const roll = [
+    ['How this adds up. Neither figure is a recommendation.'],[],
+    ['Split the award', bs.split.total, 'cheapest comparable price on each line'],
+    ['Lines included', bs.split.lines+' of '+bs.lines.length],
+    ['Of those, sole source', bs.split.sole],
+    ['Left out: not comparable', bs.split.not_comparable],
+    ['Left out: nobody quoted', bs.split.nobody],[],
+    ['Supplier','Comparable package','Their own lines','Their line count','Gaps filled elsewhere','Gap line count','Nobody can price']
+  ];
+  bs.packages.forEach(pk=>roll.push([pk.supplier, pk.comparable, pk.covered, pk.coveredLines, pk.gapFill, pk.gapLines, pk.unpriceable]));
+  roll.push([], ['The package figures include gaps filled at the best price anyone gave. That portion is not a commitment from that supplier.']);
+  const ws2 = XLSX.utils.aoa_to_sheet(roll);
+  ws2['!cols']=[{wch:26},{wch:20},{wch:18},{wch:16},{wch:22},{wch:16},{wch:18}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'How it adds up');
+
+  XLSX.writeFile(wb, (projectName()?slugify(projectName())+'-':'')+'buy-sheet.xlsx');
+  flash(btn);
+}
+
 /* ============================== EXPORTS ================================= */
+// Everything the tool decided the takeoff does not need to answer for, in one list, with the
+// reason it was set aside. This is the audit trail for the filtering: if the tool is wrong
+// about something, this is where you catch it.
+function excludedRequirementRows(){
+  const rows = [];
+  if(bidReq){
+    (bidReq._dropped_full||[]).forEach(d=>rows.push({
+      requirement: d.requirement||'', detail: d.detail||'', source: d.source||d.topic||'', from:'bid documents',
+      stage:'Word match', reason:'No material, fixture, valve, pipe or product wording in it' }));
+    (bidReq.triage_dropped||[]).forEach(d=>rows.push({
+      requirement: d.requirement||'', detail: d.detail||'', source: d.source||d.topic||'', from:'bid documents',
+      stage:'Read and sorted', reason:'Mentions material but is about how the work is done, not something a supplier can price' }));
+  }
+  ((cmpData&&cmpData.coverage&&cmpData.coverage.checks)||[]).filter(c=>c.verdict==='not a material item').forEach(c=>rows.push({
+    requirement: c.requirement||'', detail: c.note||'', source: c.source||'', from: c.from||'',
+    stage:'Coverage check', reason: c.note || 'Not something a material takeoff could ever cover' }));
+  return rows;
+}
+function excludedSheet(){
+  const rows = excludedRequirementRows();
+  const aoa = [
+    [(projectName()||'Project')+' — bid requirements NOT checked against the takeoff'],
+    ['These were set aside as not being material items. Bonding, insurance, submittals, warranty, testing and installation method all belong here.'],
+    ['If something in this list is genuinely a line your takeoff should carry, that is a filtering mistake worth reporting.'],
+    [],
+    ['Requirement','Detail','Source','From','Set aside at','Why it was set aside']
+  ];
+  rows.forEach(r=>aoa.push([r.requirement, r.detail, r.source, r.from, r.stage, r.reason]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:64},{wch:52},{wch:20},{wch:16},{wch:18},{wch:56}];
+  return { ws, count: rows.length };
+}
+// The other half of the same audit: what IS being checked against the takeoff.
+function downloadRequirementsExcel(btn){
+  if(typeof XLSX==='undefined'){ alert('The Excel library did not load. Check the connection and reload the page.'); return; }
+  if(!bidReq){ alert('Nothing loaded yet. Load the project first.'); return; }
+  const list = (bidReq.triaged || bidReq.findings || []);
+  const aoa = [
+    [(projectName()||'Project')+' — bid requirements being checked against the takeoff'],
+    [bidReq.triaged ? ('Narrowed from '+(bidReq.findings||[]).length+' to '+list.length+'.') : (list.length+' requirements, not yet narrowed down.')],
+    [],
+    ['#','Requirement','Detail','Source','From']
+  ];
+  list.forEach((r,i)=>aoa.push([i+1, r.requirement||'', r.detail||'', r.source||r.topic||'', 'bid documents']));
+  (bidReq.kickoff_points||[]).forEach((k,i)=>aoa.push([list.length+i+1, k.label||'', k.detail||'', k.source||'', 'kickoff sheet']));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:5},{wch:64},{wch:52},{wch:24},{wch:16}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Being checked');
+  XLSX.writeFile(wb, (projectName()?slugify(projectName())+'-':'')+'requirements-being-checked.xlsx');
+  flash(btn);
+}
+function downloadExcludedExcel(btn){
+  if(typeof XLSX==='undefined'){ alert('The Excel library did not load. Check the connection and reload the page.'); return; }
+  const { ws, count } = excludedSheet();
+  if(!count){ alert('Nothing has been set aside yet. Load the project first.'); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Not material');
+  XLSX.writeFile(wb, (projectName()?slugify(projectName())+'-':'')+'requirements-not-checked.xlsx');
+  flash(btn);
+}
 function cmpFname(ext){ const n=projectName().trim(); return (n?slugify(n)+'-':'')+'quote-comparison.'+ext; }
 function downloadCompareExcel(btn){
   if(!cmpData) return;
@@ -2671,16 +3301,49 @@ function downloadCompareExcel(btn){
     ws3['!cols']=[{wch:18},{wch:8},{wch:46},{wch:16},{wch:9},{wch:7},{wch:16},{wch:16},{wch:11},{wch:12},{wch:9},{wch:22},{wch:6},{wch:30}];
     XLSX.utils.book_append_sheet(wb, ws3, 'Quote lines');
 
-    // Sheet 4: the terms each quote carries. Estimators get hurt by these more than by prices.
-    const terms = [['Supplier','Quote #','Dated','Valid until','Lead time','Freight','Tax','Terms','Exclusions','Notes','Total as printed','Total added up']];
+    // Sheet: everything deliberately not checked, and why. Belongs in the same workbook as the
+    // coverage result, because a coverage sheet without it looks like it checked everything.
+    const exc2 = excludedSheet();
+    if(exc2.count) XLSX.utils.book_append_sheet(wb, exc2.ws, 'Not material');
+
+    // Sheet: what each assembly group was priced at, and on what basis. On a tag-grouped
+    // fixture quote this is where the only real numbers on the document live.
+    const anyGroups = suppliers.filter(s=>s.data).some(s=>(s.data.groups||[]).length);
+    if(anyGroups){
+      const gr = [['Supplier','Quote','Tag','What it covers','Subtotal','Price basis','Quantity basis','Plus shipping','Handwritten','Components','Notes']];
+      suppliers.filter(s=>s.data).forEach(s=>(s.data.groups||[]).forEach(g=>{
+        const lines = (s.data.items||[]).filter(it=>(it.group_tag||'').toLowerCase()===String(g.tag||'').toLowerCase());
+        gr.push([s.name, g.document||'', g.tag||'', g.description||'', num(g.subtotal)||'', g.price_basis||'', g.qty_basis||'',
+          g.plus_shipping?'YES':'', g.handwritten?'YES':'', lines.length, g.notes||'']);
+      }));
+      const wsG = XLSX.utils.aoa_to_sheet(gr);
+      wsG['!cols']=[{wch:18},{wch:22},{wch:10},{wch:38},{wch:12},{wch:12},{wch:15},{wch:13},{wch:12},{wch:12},{wch:40}];
+      XLSX.utils.book_append_sheet(wb, wsG, 'Assembly pricing');
+    }
+
+    // Sheet: handwriting and margin notes. Often the only place the real price appears.
+    const anyAnn = suppliers.filter(s=>s.data).some(s=>(s.data.annotations||[]).length);
+    if(anyAnn){
+      const an = [['Supplier','Page','Handwritten','What it says','What it means','What it affects']];
+      suppliers.filter(s=>s.data).forEach(s=>(s.data.annotations||[]).forEach(a=>
+        an.push([s.name, a.page||'', a.handwritten?'YES':'', a.text||'', a.meaning||'', a.affects||''])));
+      const wsA = XLSX.utils.aoa_to_sheet(an);
+      wsA['!cols']=[{wch:18},{wch:7},{wch:13},{wch:38},{wch:56},{wch:36}];
+      XLSX.utils.book_append_sheet(wb, wsA, 'Handwriting');
+    }
+
+    // Sheet: the terms each quote carries. Estimators get hurt by these more than by prices.
+    const terms = [['Supplier','Quotes in the file','Quote #','Dated','Valid until','Lead time','Freight','Tax','Terms','Price basis','Multiplier','Exclusions','Notes','Total as printed','Total worked out here','How that total was arrived at']];
     suppliers.filter(s=>s.data).forEach(s=>{
       const m = s.data.quote_meta||{}, t = supplierTotal(s.data);
-      terms.push([s.name, m.quote_number||'', m.quote_date||'', m.valid_until||'', m.lead_time||'', m.freight||'', m.tax||'', m.terms||'',
+      terms.push([s.name, (s.data.documents||[]).map(d=>[d.label||d.quote_number, d.pages].filter(Boolean).join(' p')).join(' | '),
+        m.quote_number||'', m.quote_date||'', m.valid_until||'', m.lead_time||'', m.freight||'', m.tax||'', m.terms||'',
+        m.price_basis||'', m.multiplier||'',
         (m.exclusions||[]).join(' | '), (m.notes||[]).join(' | '),
-        num(s.data.totals_stated&&s.data.totals_stated.total)||'', t.derived?t.value:'']);
+        num(s.data.totals_stated&&s.data.totals_stated.total)||'', t.derived?t.value:'', t.basis]);
     });
     const ws4 = XLSX.utils.aoa_to_sheet(terms);
-    ws4['!cols']=[{wch:18},{wch:12},{wch:12},{wch:12},{wch:16},{wch:24},{wch:20},{wch:30},{wch:60},{wch:40},{wch:14},{wch:14}];
+    ws4['!cols']=[{wch:18},{wch:40},{wch:12},{wch:12},{wch:12},{wch:16},{wch:24},{wch:20},{wch:26},{wch:12},{wch:44},{wch:60},{wch:40},{wch:14},{wch:16},{wch:30}];
     XLSX.utils.book_append_sheet(wb, ws4, 'Quote terms');
 
     XLSX.writeFile(wb, cmpFname('xlsx'));
