@@ -992,15 +992,84 @@ function arrayBufferToBase64(bytes){
   for(let i=0;i<bytes.length;i+=chunkSize) binary += String.fromCharCode.apply(null, bytes.subarray(i, i+chunkSize));
   return btoa(binary);
 }
+// Tried newest first, then older. The newest pdf.js builds use JavaScript features that only
+// land in very recent browsers, and a build that half-loads on an older one is worse than a
+// build that does not load at all: it fails somewhere deep inside rendering instead of up
+// front. An office machine on a Chrome a year behind should still be able to read a scan.
+const PDFJS_VERSIONS = ['6.1.200','4.8.69','3.11.174'];
 let _pdfjsLoadPromise = null;
 function getPdfJs(){
   if(!_pdfjsLoadPromise){
-    _pdfjsLoadPromise = import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.1.200/pdf.min.mjs').then(mod=>{
-      mod.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.1.200/pdf.worker.min.mjs';
-      return mod;
-    });
+    _pdfjsLoadPromise = (async ()=>{
+      let lastErr = null;
+      for(const v of PDFJS_VERSIONS){
+        const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/'+v+'/';
+        try{
+          // pdf.js parks its worker on a global. Left in place, the next version in the chain
+          // picks up the previous one's worker and dies on a version mismatch that has nothing
+          // to do with whether it would have worked.
+          try{ delete globalThis.pdfjsWorker; }catch(e){ /* not always configurable, carry on */ }
+          const mod = await import(base+'pdf.min.mjs');
+          mod.GlobalWorkerOptions.workerSrc = base+'pdf.worker.min.mjs';
+          // Prove it works on THIS browser before committing to it, and prove it by doing the
+          // thing that actually breaks. Loading and paging a document succeeds on builds whose
+          // rendering does not, and rendering is the part that silently hands back a blank
+          // page. So the probe renders.
+          const probeBytes = probePdfBytes();
+          const probe = await mod.getDocument({ data: probeBytes }).promise;
+          const pg = await probe.getPage(1);
+          const vp = pg.getViewport({ scale: 1 });
+          const cv = document.createElement('canvas');
+          cv.width = Math.max(1, Math.round(vp.width)); cv.height = Math.max(1, Math.round(vp.height));
+          const cx = cv.getContext('2d');
+          try{
+            await pg.render({ canvas: cv, canvasContext: cx, viewport: vp }).promise;
+            mod._canRender = true;
+          }catch(e){
+            // It can read text but not draw. Worth remembering rather than rejecting: text
+            // extraction still works, and the fallback renderer is only ever needed for scans.
+            mod._canRender = false;
+            mod._renderError = (e && e.message) || 'rendering is not supported by this build in this browser';
+            if(v !== PDFJS_VERSIONS[PDFJS_VERSIONS.length-1]){ lastErr = e; continue; }
+          }
+          _pdfjsVersion = v;
+          return mod;
+        }catch(e){ lastErr = e; }
+      }
+      // Last resort: take a reader that can parse even if none of them can draw. Text PDFs
+      // still work, and a scan gets sent as PDF anyway, which needs no rendering at all.
+      for(const v of PDFJS_VERSIONS){
+        const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/'+v+'/';
+        try{
+          try{ delete globalThis.pdfjsWorker; }catch(e){ /* not always configurable, carry on */ }
+          const mod = await import(base+'pdf.min.mjs');
+          mod.GlobalWorkerOptions.workerSrc = base+'pdf.worker.min.mjs';
+          const doc = await mod.getDocument({ data: probePdfBytes() }).promise;
+          await doc.getPage(1);
+          mod._canRender = false;
+          _pdfjsVersion = v+' (reads but cannot draw here)';
+          return mod;
+        }catch(e){ lastErr = e; }
+      }
+      throw new Error('None of the PDF readers would load in this browser ('+PDFJS_VERSIONS.join(', ')+'). Last error: '+((lastErr&&lastErr.message)||'unknown')+'. Spreadsheets, Word files and images still work; PDFs will not until this browser is updated.');
+    })();
   }
   return _pdfjsLoadPromise;
+}
+let _pdfjsVersion = '';
+// A real, valid one-page PDF to probe with, built by the PDF library that is already loaded.
+// Hand-rolling the bytes was a false economy: a probe document that is itself slightly invalid
+// fails a perfectly good reader and sends the chain looking for one that does not exist.
+const PROBE_PDF_B64 = 'JVBERi0xLjcKJYGBgYEKCjEgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFsgNCAwIFIgXQovQ291bnQgMQo+PgplbmRvYmoKCjIgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDEgMCBSCj4+CmVuZG9iagoKMyAwIG9iago8PAovUHJvZHVjZXIgPEZFRkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyMDAwMjgwMDY4MDA3NDAwNzQwMDcwMDA3MzAwM0EwMDJGMDAyRjAwNjcwMDY5MDA3NDAwNjgwMDc1MDA2MjAwMkUwMDYzMDA2RjAwNkQwMDJGMDA0ODAwNkYwMDcwMDA2NDAwNjkwMDZFMDA2NzAwMkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyOT4KL01vZERhdGUgKEQ6MjAyNjA4MjAxOTI4MjVaKQovQ3JlYXRvciA8RkVGRjAwNzAwMDY0MDA2NjAwMkQwMDZDMDA2OTAwNjIwMDIwMDAyODAwNjgwMDc0MDA3NDAwNzAwMDczMDAzQTAwMkYwMDJGMDA2NzAwNjkwMDc0MDA2ODAwNzUwMDYyMDAyRTAwNjMwMDZGMDA2RDAwMkYwMDQ4MDA2RjAwNzAwMDY0MDA2OTAwNkUwMDY3MDAyRjAwNzAwMDY0MDA2NjAwMkQwMDZDMDA2OTAwNjIwMDI5PgovQ3JlYXRpb25EYXRlIChEOjIwMjYwODIwMTkyODI1WikKPj4KZW5kb2JqCgo0IDAgb2JqCjw8Ci9UeXBlIC9QYWdlCi9QYXJlbnQgMSAwIFIKL1Jlc291cmNlcyA8PAo+PgovTWVkaWFCb3ggWyAwIDAgOSA5IF0KPj4KZW5kb2JqCgp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTYgMDAwMDAgbiAKMDAwMDAwMDA3NiAwMDAwMCBuIAowMDAwMDAwMTI2IDAwMDAwIG4gCjAwMDAwMDA1OTYgMDAwMDAgbiAKCnRyYWlsZXIKPDwKL1NpemUgNQovUm9vdCAyIDAgUgovSW5mbyAzIDAgUgo+PgoKc3RhcnR4cmVmCjY4MwolJUVPRg==';
+// A fresh copy every single call. pdf.js hands the buffer you give it to its worker, which
+// DETACHES it: the second reader in the chain would otherwise be probed with a zero length
+// array and rejected for a fault that is entirely ours. The same trap applies to real files,
+// which is why every splitter below copies before it reads.
+function probePdfBytes(){
+  const bin = atob(PROBE_PDF_B64);
+  const out = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 async function splitIntoTextBatches(fileBuf, pagesPerBatch){
   const pdfjsLib = await getPdfJs();
@@ -1026,6 +1095,30 @@ async function splitIntoTextBatches(fileBuf, pagesPerBatch){
   }
   return { batches: batches.length?batches:[{text:'(document has no pages)',startPage:1,endPage:1,totalPages:1}], avgCharsPerPage };
 }
+// Splits a scan into small PDFs and sends those instead of rasterizing them here. Drawing PDF
+// pages onto a canvas in the browser turned out to be the single most fragile thing in this
+// tool: a pdf.js version change was enough to make every page come back a blank white image,
+// which then got sent off and read as an empty quote. Handing over the actual PDF removes that
+// whole class of failure, and the rendering happens where it is done properly.
+async function splitIntoPdfBatches(fileBuf, pagesPerBatch){
+  if(typeof PDFLib === 'undefined') throw new Error('PDF_LIB_MISSING');
+  const { PDFDocument } = PDFLib;
+  const srcDoc = await PDFDocument.load(fileBuf.slice(0), { ignoreEncryption:true });
+  const totalPages = srcDoc.getPageCount();
+  const step = Math.max(1, pagesPerBatch|0);
+  const batches = [];
+  for(let start=0; start<totalPages; start+=step){
+    const end = Math.min(start+step, totalPages);
+    const indices = [];
+    for(let i=start;i<end;i++) indices.push(i);
+    const doc = await PDFDocument.create();
+    const copied = await doc.copyPages(srcDoc, indices);
+    copied.forEach(pg=>doc.addPage(pg));
+    const bytes = await doc.save();
+    batches.push({ b64: arrayBufferToBase64(bytes), startPage:start+1, endPage:end, totalPages });
+  }
+  return batches;
+}
 const MAX_IMAGE_DIMENSION_PX = 1568; // Claude's vision works natively up to about this size
 async function splitIntoImageBatches(fileBuf, pagesPerBatch){
   const pdfjsLib = await getPdfJs();
@@ -1045,12 +1138,52 @@ async function splitIntoImageBatches(fileBuf, pagesPerBatch){
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(viewport.width));
       canvas.height = Math.max(1, Math.round(viewport.height));
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      images.push({ data: canvas.toDataURL('image/jpeg', 0.9).split(',')[1], mediaType: 'image/jpeg' });
+      const ctx = canvas.getContext('2d', { willReadFrequently:true });
+      let renderFailed = '';
+      // Paint the ground white first. A scanned page is ink on paper, and a canvas starts
+      // transparent, which flattens to something unpredictable on the way to JPEG.
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Both keys on purpose: pdf.js has moved this parameter around between major versions
+      // and passing only the one it no longer reads is exactly how you get a blank page.
+      try{
+        await page.render({ canvas, canvasContext: ctx, viewport, background:'#FFFFFF' }).promise;
+      }catch(e){
+        // A page that would not draw is a broken read, not an empty page. Saying so is the
+        // whole point: the old code let this through as white paper and it was read as a quote
+        // with nothing on it.
+        renderFailed = (e && e.message) || 'the page would not render';
+      }
+      const ink = renderFailed ? 0 : inkFraction(ctx, canvas.width, canvas.height);
+      images.push({ data: canvas.toDataURL('image/jpeg', 0.9).split(',')[1], mediaType: 'image/jpeg',
+                    ink, page: p, failed: renderFailed });
     }
-    batches.push({ images, startPage:start, endPage:end, totalPages });
+    batches.push({ images, startPage:start, endPage:end, totalPages,
+      blankPages: images.filter(im=>!im.failed && im.ink < BLANK_INK_THRESHOLD).map(im=>im.page),
+      failedPages: images.filter(im=>im.failed).map(im=>({ page:im.page, why:im.failed })) });
   }
-  return batches.length ? batches : [{ images:[], startPage:1, endPage:1, totalPages:1 }];
+  return batches.length ? batches : [{ images:[], startPage:1, endPage:1, totalPages:1, blankPages:[], failedPages:[] }];
+}
+// How much of the page is not background. A real scanned page of a quote is a few percent ink;
+// anything under a twentieth of one percent has nothing on it worth sending.
+const BLANK_INK_THRESHOLD = 0.0005;
+function inkFraction(ctx, w, h){
+  try{
+    const step = Math.max(1, Math.floor(Math.min(w,h)/400));
+    const d = ctx.getImageData(0, 0, w, h).data;
+    let dark = 0, seen = 0;
+    for(let y=0; y<h; y+=step){
+      for(let x=0; x<w; x+=step){
+        const i = (y*w + x) * 4;
+        const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+        if(lum < 200) dark++;
+        seen++;
+      }
+    }
+    return seen ? dark/seen : 0;
+  }catch(e){
+    return 1; // cannot measure it, so do not claim the page is blank
+  }
 }
 
 
@@ -1143,17 +1276,35 @@ async function buildJobsFromFile(file, header, opts){
     });
   } else if(kind === 'pdf'){
     const { batches, avgCharsPerPage } = await splitIntoTextBatches(file.buf, pagesPerBatch);
-    if(avgCharsPerPage < 40){
-      warn.push(file.name+' has almost no extractable text, so it is being read from the page images instead. That is slower but it handles scans and photos.');
-      const imgBatches = await splitIntoImageBatches(file.buf, Math.max(1, Math.min(3, pagesPerBatch)));
-      imgBatches.forEach(b=>{
-        const content = b.images.map(img=>({ type:'image', source:{ type:'base64', media_type:img.mediaType, data:img.data } }));
-        content.push({ type:'text', text: header+'\n\nSOURCE: scanned document "'+file.name+'", pages '+b.startPage+' to '+b.endPage+' of '+b.totalPages+'. Read it from the images.' });
-        jobs.push({ label: file.name+' p'+b.startPage+'-'+b.endPage+' (scanned)', content });
-      });
-    } else {
+    if(avgCharsPerPage >= 40){
       batches.forEach(b=>jobs.push({ label: file.name+' p'+b.startPage+'-'+b.endPage,
         content:[{ type:'text', text: header+'\n\nSOURCE: "'+file.name+'", pages '+b.startPage+' to '+b.endPage+' of '+b.totalPages+'.\n\n'+b.text }] }));
+    } else if(opts.scanMode !== 'image'){
+      // A scan. Hand over the actual PDF pages rather than pictures of them drawn here.
+      warn.push(file.name+' has no text layer, so it is a scan. The pages are being sent as PDF rather than rendered here, which is both sharper and one less thing to go wrong.');
+      const pdfBatches = await splitIntoPdfBatches(file.buf, Math.max(1, Math.min(4, pagesPerBatch)));
+      pdfBatches.forEach(b=>jobs.push({ label: file.name+' p'+b.startPage+'-'+b.endPage+' (scan)', scan:true,
+        content:[
+          { type:'document', source:{ type:'base64', media_type:'application/pdf', data:b.b64 } },
+          { type:'text', text: header+'\n\nSOURCE: scanned document "'+file.name+'", pages '+b.startPage+' to '+b.endPage+' of '+b.totalPages+'. Read every line off these pages. If a page genuinely has nothing on it, say so in quote_meta.notes and return no items for it: do not describe it as a separate quote and do not invent a document entry for it.' }
+        ] }));
+    } else {
+      // Fallback only: rasterize here. Any page that comes out blank is dropped rather than
+      // sent, because a blank page reads as an empty quote and quietly poisons everything after.
+      const imgBatches = await splitIntoImageBatches(file.buf, Math.max(1, Math.min(3, pagesPerBatch)));
+      const allBlank = [], allFailed = [];
+      imgBatches.forEach(b=>{
+        const good = b.images.filter(im=>!im.failed && im.ink >= BLANK_INK_THRESHOLD);
+        (b.blankPages||[]).forEach(pn=>allBlank.push(pn));
+        (b.failedPages||[]).forEach(f=>allFailed.push(f));
+        if(!good.length) return;
+        const content = good.map(img=>({ type:'image', source:{ type:'base64', media_type:img.mediaType, data:img.data } }));
+        content.push({ type:'text', text: header+'\n\nSOURCE: scanned document "'+file.name+'", pages '+b.startPage+' to '+b.endPage+' of '+b.totalPages+'. Read it from the images.' });
+        jobs.push({ label: file.name+' p'+b.startPage+'-'+b.endPage+' (scanned)', scan:true, content });
+      });
+      if(allFailed.length) warn.push('Page'+(allFailed.length===1?' ':'s ')+allFailed.map(f=>f.page).join(', ')+' of '+file.name+' would not render in this browser and '+(allFailed.length===1?'was':'were')+' not sent. That is this browser, not the file: '+esc(allFailed[0].why)+'. Nothing was read from '+(allFailed.length===1?'it':'them')+' and nothing invented.');
+      if(allBlank.length) warn.push('Page'+(allBlank.length===1?' ':'s ')+allBlank.join(', ')+' of '+file.name+' have nothing on them and '+(allBlank.length===1?'was':'were')+' not sent. Nothing was read from '+(allBlank.length===1?'it':'them')+', and nothing has been invented in '+(allBlank.length===1?'its':'their')+' place.');
+      if(!jobs.length) warn.push('Not one page of '+file.name+' could be read here. Nothing was sent and nothing was read, so no quote has been created from it.');
     }
   } else if(kind === 'docx'){
     const text = await textFromDocx(file.buf);
@@ -1182,6 +1333,13 @@ async function buildJobsFromFiles(files, header, opts){
     jobs = jobs.concat(r.jobs); warn = warn.concat(r.warn);
   }
   return { jobs, warn };
+}
+// Sending a PDF straight to the API is the good path, but if this account or model will not
+// take a document block there is no point failing the whole read over it: fall back to
+// rendering the pages here instead, once, automatically.
+function isDocumentBlockRejection(err){
+  const m = String((err&&err.message)||'');
+  return /document|application\/pdf|media_type|unsupported|not supported/i.test(m) && /400|invalid_request|API 4/i.test(m);
 }
 
 /* ------------------------------------------------------------- API plumbing */
@@ -1337,7 +1495,8 @@ WHAT THESE DOCUMENTS ACTUALLY LOOK LIKE. Real supplier quotes are messier than a
 RULES:
 1. Transcribe what is actually printed or written. Never invent a line, a quantity, a model number, or a price. If a field is not there, return an empty string (or 0 for a number), not a plausible value.
 2. "description" must be the supplier's own wording, as close to verbatim as you can get it, abbreviations and all. Do not clean it up or standardize it. The comparison depends on seeing what they actually wrote.
-3. SEVERAL QUOTES IN ONE FILE: list each one in "documents" with its own quote number, page range and a short label. Tag every item and every group with the "document" label it belongs to. If the whole file is genuinely one quote, return one entry.
+3. SEVERAL QUOTES IN ONE FILE: list a document in "documents" ONLY when you can actually see it is a distinct quote, because it carries its own printed quote number, its own header, or an obviously different form and layout. Give it that printed quote number and a label taken from the document itself. NEVER invent a document from the page range you happen to have been given: "pages 4 to 6" is not a quote, it is a batch, and reporting it as one produces nonsense once the batches are put back together. If you are only seeing part of one quote, return a single entry, or none at all if you cannot tell. Tag every item and group with the document label it belongs to.
+3a. BLANK OR UNREADABLE PAGES: if a page has nothing legible on it, return NO items, NO groups and NO documents for it, and say what happened in quote_meta.notes. Do not treat an empty page as a quote, an assembly, or anything else. Reporting nothing is the correct output for nothing.
 4. GROUPS: whenever items sit under a schedule tag or an assembly heading, record the group in "groups" with its tag and its subtotal exactly as printed, and put that same tag on each item in "group_tag". If a group has no printed subtotal, leave subtotal at 0 rather than adding the lines up yourself.
 5. QUANTITY BASIS: for every item and every group set "qty_basis" to "per assembly" when the quantity is per one fixture or one assembly, "job total" when the quantity is genuinely how many the job gets, and "unclear" when the document does not make it possible to tell. "unclear" is a correct and useful answer here. Do not default to "job total" because it looks tidier.
 6. PRICE BASIS: set "price_basis" to "net" when the price shown is the price, "list" when it is a list or published price that a multiplier or discount applies to, and "unclear" otherwise. If a multiplier or discount appears anywhere, printed or handwritten, put it in "quote_meta.multiplier" verbatim and describe what it applies to. NEVER apply a multiplier yourself and never return an adjusted number. Report what is written.
@@ -1702,32 +1861,68 @@ async function runSupplier(id){
   renderSuppliers();
   const hintId = 'suphint-'+s.id;
   const perBatch = Math.max(1, parseInt(document.getElementById('quotePagesPerBatch').value,10) || 6);
+  const header = 'A SUPPLIER QUOTE for a mechanical/plumbing bid. The supplier name the estimator gave for this quote is "'+s.name+'"; prefer the name printed on the quote itself if there is one. Transcribe every line item.';
 
-  try{
-    const merged = { supplier: s.name,
-                     quote_meta:{ quote_number:'',quote_date:'',valid_until:'',contact:'',freight:'',tax:'',lead_time:'',terms:'',price_basis:'',multiplier:'',exclusions:[],notes:[] },
-                     totals_stated:{subtotal:0,tax:0,freight:0,total:0},
-                     documents:[], groups:[], annotations:[], items:[],
-                     _read:{ mode:s.mode, batches:0, at:new Date().toISOString() } };
-    const header = 'A SUPPLIER QUOTE for a mechanical/plumbing bid. The supplier name the estimator gave for this quote is "'+s.name+'"; prefer the name printed on the quote itself if there is one. Transcribe every line item.';
-    let jobs = [];
+  function freshMerged(){
+    return { supplier: s.name,
+      quote_meta:{ quote_number:'',quote_date:'',valid_until:'',contact:'',freight:'',tax:'',lead_time:'',terms:'',price_basis:'',multiplier:'',exclusions:[],notes:[] },
+      totals_stated:{subtotal:0,tax:0,freight:0,total:0},
+      documents:[], groups:[], annotations:[], items:[],
+      _read:{ mode:s.mode, batches:0, empty_batches:[], at:new Date().toISOString() } };
+  }
+  async function buildJobs(scanMode){
     if(s.mode==='paste'){
-      jobs = [{ label:'pasted text', content:[{type:'text', text: header+'\n\nSOURCE: text pasted in by the estimator, usually the body of an email.\n\n'+s.pasted}] }];
-    } else {
-      const r = await buildJobsFromFiles(s.files, header, { pagesPerBatch: perBatch, rowsPerBatch: 120 });
-      jobs = r.jobs;
-      if(r.warn.length) errEl.innerHTML = '<div class="note warn" style="margin:10px 0 0">'+r.warn.map(esc).join('<br>')+'</div>';
-      if(!jobs.length) throw new Error('Nothing readable was found in that file.');
+      return { jobs:[{ label:'pasted text', content:[{type:'text', text: header+'\n\nSOURCE: text pasted in by the estimator, usually the body of an email.\n\n'+s.pasted}] }], warn:[] };
     }
-    for(let i=0;i<jobs.length;i++){
-      setHint(hintId, 'Reading '+jobs[i].label+' ('+(i+1)+' of '+jobs.length+')…');
-      const out = await fetchAndParseJSON(key, jobs[i].content, SYSTEM_QUOTE, s.abort.signal, hintId, s.name+' — '+jobs[i].label);
+    return await buildJobsFromFiles(s.files, header, { pagesPerBatch: perBatch, rowsPerBatch: 120, scanMode });
+  }
+  async function readAll(scanMode){
+    const merged = freshMerged();
+    const r = await buildJobs(scanMode);
+    if(r.warn.length) errEl.innerHTML = '<div class="note warn" style="margin:10px 0 0">'+r.warn.map(esc).join('<br>')+'</div>';
+    if(!r.jobs.length) throw new Error('Nothing readable was found in that file. Nothing was sent and nothing was read.');
+    for(let i=0;i<r.jobs.length;i++){
+      const job = r.jobs[i];
+      setHint(hintId, 'Reading '+job.label+' ('+(i+1)+' of '+r.jobs.length+')…');
+      const out = await fetchAndParseJSON(key, job.content, SYSTEM_QUOTE, s.abort.signal, hintId, s.name+' — '+job.label);
+      // A batch that produced nothing must not be allowed to contribute anything at all. This
+      // is the guard that was missing when blank pages turned into four imaginary quotes.
+      const gotSomething = ((out&&out.items)||[]).length || ((out&&out.groups)||[]).length;
+      if(!gotSomething){
+        merged._read.empty_batches.push(job.label);
+        const said = ((out&&out.quote_meta&&out.quote_meta.notes)||[]).filter(Boolean);
+        said.forEach(n=>{ if(merged.quote_meta.notes.indexOf(n)<0) merged.quote_meta.notes.push(n); });
+        merged._read.batches++;
+        continue;
+      }
       mergeQuoteResult(merged, out);
       merged._read.batches++;
     }
-    merged.supplier = s.name; // the estimator's label wins for column headings; the printed one is kept in quote_meta
+    return merged;
+  }
+
+  try{
+    let merged;
+    try{
+      merged = await readAll('pdf');
+    }catch(e){
+      if(e.name === 'AbortError' || !isDocumentBlockRejection(e)) throw e;
+      setHint(hintId, 'This account would not take the PDF pages directly, so falling back to rendering them here…');
+      merged = await readAll('image');
+    }
+    merged.supplier = s.name; // the estimator's label heads the column; the printed one stays in quote_meta
+    if(!(merged.items||[]).length && !(merged.groups||[]).length){
+      s.data = null;
+      errEl.innerHTML = '<div class="note err" style="margin:10px 0 0"><b>Nothing was read off this quote.</b> '+
+        (merged._read.empty_batches.length ? ('Every batch came back empty: '+esc(merged._read.empty_batches.join(', '))+'. ') : '')+
+        'No quote has been created, deliberately, because an empty quote is worse than no quote. '+
+        (merged.quote_meta.notes.length ? ('What came back: '+esc(merged.quote_meta.notes.join(' ')) ) : 'Try again, and if it repeats the PDF may need re-exporting or re-scanning.')+'</div>';
+      setHint(hintId, '');
+      return;
+    }
     s.data = merged;
-    setHint(hintId, (merged.items||[]).length+' line'+((merged.items||[]).length===1?'':'s')+' read.');
+    setHint(hintId, (merged.items||[]).length+' line'+((merged.items||[]).length===1?'':'s')+' read'+
+      (merged._read.empty_batches.length ? (', '+merged._read.empty_batches.length+' batch'+(merged._read.empty_batches.length===1?'':'es')+' had nothing on them') : '')+'.');
     saveToCloud('p2_quote:'+slugify(s.name), merged);
   }catch(e){
     if(e.name === 'AbortError'){ setHint(hintId, 'Stopped.'); }
@@ -1759,6 +1954,9 @@ function mergeQuoteResult(merged, out){
   (out.documents||[]).forEach(d=>{
     const key = (d.quote_number||d.label||'').trim().toLowerCase();
     if(!key) return;
+    // Belt and braces on top of the prompt: a "document" with no quote number whose name is
+    // really just a page range is a batch that has been mistaken for a quote. Bin it.
+    if(!String(d.quote_number||'').trim() && /pages?\s*\d+\s*(-|to|through)\s*\d+/i.test(key)) return;
     const found = merged.documents.find(x=>((x.quote_number||x.label||'').trim().toLowerCase())===key);
     if(found){ if(!found.kind && d.kind) found.kind = d.kind; return; }
     merged.documents.push({ label:d.label||d.quote_number||'', quote_number:d.quote_number||'', pages:d.pages||'', kind:d.kind||'' });
@@ -1903,6 +2101,8 @@ function renderQuoteResults(){
         ' &middot; '+(tot.value?money(tot.value):'no total')+(high.length?(' &middot; '+high.length+' thing'+(high.length===1?'':'s')+' to resolve'):'')+'</span></div>'+
       '<div class="collapsible-body" style="display:block">'+
 
+      (((d._read&&d._read.empty_batches)||[]).length ? '<div class="note warn"><b>'+d._read.empty_batches.length+' batch'+(d._read.empty_batches.length===1?'':'es')+' came back with nothing on '+(d._read.empty_batches.length===1?'it':'them')+'.</b> '+
+        esc(d._read.empty_batches.join(', '))+'. Nothing was read from '+(d._read.empty_batches.length===1?'that':'those')+' and nothing was invented in '+(d._read.empty_batches.length===1?'its':'their')+' place. If those pages do have content, the scan needs redoing.</div>' : '')+
       (docs.length>1 ? '<div class="note err"><b>This file holds '+docs.length+' separate quotes.</b><ul style="margin:6px 0 0;padding-left:20px">'+
         docs.map(x=>'<li><b>'+esc(x.label||x.quote_number)+'</b>'+(x.pages?(' &middot; pages '+esc(x.pages)):'')+(x.kind?(' &middot; '+esc(x.kind)):'')+'</li>').join('')+
         '</ul><div style="margin-top:6px">They are kept apart rather than merged into one number, because they usually are not meant to be added together.</div></div>' : '')+
@@ -2072,20 +2272,40 @@ async function readDocInto(opts){
   if(opts.spinId) document.getElementById(opts.spinId).style.display = 'inline-block';
   const merged = { items:[], notes:[] };
   try{
-    let jobs = [], warn = [];
-    if(opts.mode==='text'){
-      jobs = [{ label:'pasted text', content:[{type:'text', text: opts.header+'\n\nSOURCE: text pasted in by the estimator. It may have come straight out of a spreadsheet, so columns may be separated by tabs.\n\n'+pasted}] }];
-    } else {
-      const r = await buildJobsFromFiles(opts.files, opts.header, { pagesPerBatch:5, rowsPerBatch:120 });
-      jobs = r.jobs; warn = r.warn;
+    async function pass(scanMode){
+      merged.items.length = 0; merged.notes.length = 0;
+      let jobs = [], warn = [];
+      if(opts.mode==='text'){
+        jobs = [{ label:'pasted text', content:[{type:'text', text: opts.header+'\n\nSOURCE: text pasted in by the estimator. It may have come straight out of a spreadsheet, so columns may be separated by tabs.\n\n'+pasted}] }];
+      } else {
+        const r = await buildJobsFromFiles(opts.files, opts.header, { pagesPerBatch:5, rowsPerBatch:120, scanMode });
+        jobs = r.jobs; warn = r.warn;
+      }
+      if(warn.length) out.innerHTML = '<div class="note warn" style="margin-top:12px">'+warn.map(esc).join('<br>')+'</div>';
+      if(!jobs.length) throw new Error('Nothing readable was found in that. Nothing was sent and nothing was read. If it is a spreadsheet, check the sheet actually has rows in it.');
+      const empty = [];
+      for(let i=0;i<jobs.length;i++){
+        setHint(opts.hintId, 'Reading '+jobs[i].label+' ('+(i+1)+' of '+jobs.length+')…');
+        const r = await fetchAndParseJSON(key, jobs[i].content, opts.system, ctrl.signal, opts.hintId, opts.label+' — '+jobs[i].label);
+        if(!((r.items||[]).length)) empty.push(jobs[i].label);
+        (r.items||[]).forEach(it=>merged.items.push(it));
+        (r.notes||[]).forEach(n=>{ if(merged.notes.indexOf(n)<0) merged.notes.push(n); });
+      }
+      merged._empty_batches = empty;
     }
-    if(warn.length) out.innerHTML = '<div class="note warn" style="margin-top:12px">'+warn.map(esc).join('<br>')+'</div>';
-    if(!jobs.length){ out.innerHTML += '<div class="note err"><b>Nothing readable was found in that.</b> If it is a spreadsheet, check the sheet actually has rows in it.</div>'; return null; }
-    for(let i=0;i<jobs.length;i++){
-      setHint(opts.hintId, 'Reading '+jobs[i].label+' ('+(i+1)+' of '+jobs.length+')…');
-      const r = await fetchAndParseJSON(key, jobs[i].content, opts.system, ctrl.signal, opts.hintId, opts.label+' — '+jobs[i].label);
-      (r.items||[]).forEach(it=>merged.items.push(it));
-      (r.notes||[]).forEach(n=>{ if(merged.notes.indexOf(n)<0) merged.notes.push(n); });
+    try{
+      await pass('pdf');
+    }catch(e){
+      if(e.name === 'AbortError' || !isDocumentBlockRejection(e)) throw e;
+      setHint(opts.hintId, 'This account would not take the PDF pages directly, so falling back to rendering them here…');
+      await pass('image');
+    }
+    if(!merged.items.length){
+      out.innerHTML += '<div class="note err" style="margin-top:12px"><b>Nothing was read out of that.</b> '+
+        ((merged._empty_batches||[]).length ? ('Every batch came back empty: '+esc(merged._empty_batches.join(', '))+'. ') : '')+
+        'Nothing has been created and nothing invented. '+
+        (merged.notes.length ? ('What came back: '+esc(merged.notes.join(' '))) : 'Try again, and if it repeats the file may need re-exporting.')+'</div>';
+      return null;
     }
     setHint(opts.hintId, merged.items.length+' item'+(merged.items.length===1?'':'s')+' read.');
     merged._sources = opts.mode==='text' ? ['pasted text'] : opts.files.map(f=>f.name);
