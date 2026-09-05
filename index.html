@@ -257,6 +257,20 @@
   .grp-h.collapsible-head .chev{font-style:normal;color:var(--muted);font-size:15px;transition:transform .15s;transform:rotate(-90deg);flex:none}
   .grp-h.collapsible-head.open .chev{transform:rotate(0deg)}
   .cmp-tools{display:flex;gap:8px;margin:0 0 12px}
+  .libhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .libhead .ln{font-family:var(--display);font-weight:600;font-size:16px;color:var(--navy)}
+  .libhead .lm{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .libbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  .libbar input[type=text]{flex:1;min-width:200px;max-width:420px}
+  .libpager{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+  table.lib{border-collapse:collapse;width:100%;font-size:12.5px}
+  table.lib th{background:var(--navy);color:#fff;font-family:var(--display);font-weight:600;font-size:11.5px;text-align:left;padding:8px 10px;white-space:nowrap}
+  table.lib td{padding:6px 10px;border-top:1px solid #EDF1F4;vertical-align:top;max-width:340px;overflow-wrap:anywhere}
+  table.lib tr:nth-child(even) td{background:#FAFCFD}
+  table.lib mark{background:#FFF0B3;padding:0 1px}
+  .rolegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-top:6px}
+  .rolegrid label{font-size:12px;font-weight:600;color:var(--ink);display:block;margin-bottom:3px}
+  .rolegrid select{font-size:12.5px;padding:6px 8px}
 
   /* ---- exceptions ---- */
   .exc{
@@ -417,6 +431,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">4 &middot; Comparison</button>
     <button id="ptab-exceptions" onclick="setPageTab('exceptions')" type="button">5 &middot; Exceptions<span class="tabcount" id="tc-exc">0</span></button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
+    <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
   </div>
 
@@ -567,6 +582,24 @@
     <div id="buyResults"></div>
   </div>
 
+  <!-- ============================ LIBRARY ============================ -->
+  <div id="page-library" style="display:none">
+    <div class="note info">
+      <b>Standing reference sheets. Nothing here goes near the AI.</b> A price list or a procedures sheet is a clean grid, so the browser reads it itself in about a second and keeps it. That means no cost to load it, no cost to look at it, and no waiting: a fifteen thousand row sheet opens as fast as a fifty row one. It lives on this computer and it is there on <b>every</b> job, not just the one that happens to be open.
+    </div>
+    <div class="card">
+      <h2>Add a reference sheet</h2>
+      <div class="drop" id="libDrop">
+        <div class="big">Drop a spreadsheet here</div>
+        <div class="small">or click to choose &middot; .xlsx, .xlsm, .xls, .csv &middot; every sheet in the workbook comes across separately</div>
+      </div>
+      <input type="file" id="libFile" accept=".xlsx,.xlsm,.xls,.csv,.tsv" multiple style="display:none">
+      <div class="progline" id="libStatus"></div>
+      <p class="hint">Read straight off the grid: the first row that looks like headings becomes the column names and everything under it becomes rows. Nothing is interpreted, nothing is reworded, nothing is dropped. If a sheet has a title block above the headings it gets skipped automatically, and you can change which row is the heading afterwards.</p>
+    </div>
+    <div id="libList"></div>
+  </div>
+
   <!-- ============================ TAB ASK ============================ -->
   <div id="page-ask" style="display:none">
     <div class="card">
@@ -646,7 +679,7 @@ function toggleCollapse(headEl){
   headEl.classList.toggle('open', !open);
 }
 function setPageTab(p){
-  ['takeoff','quotes','bidreq','compare','exceptions','buy','ask'].forEach(name=>{
+  ['takeoff','quotes','bidreq','compare','exceptions','buy','library','ask'].forEach(name=>{
     const page = document.getElementById('page-'+name);
     const tab = document.getElementById('ptab-'+name);
     if(page) page.style.display = (name===p) ? 'block' : 'none';
@@ -654,6 +687,7 @@ function setPageTab(p){
   });
   if(p==='compare') renderReadiness();
   if(p==='buy') renderBuySheet();
+  if(p==='library') renderLibrary();
   window.scrollTo({top:0, behavior:'smooth'});
 }
 function fillAsk(q){ document.getElementById('askQ').value = q; }
@@ -1857,6 +1891,11 @@ function updateCounts(){
   const reqN = (bidReq ? (((bidReq.triaged||bidReq.findings)||[]).length + (bidReq.kickoff_points||[]).length) : 0) + (specBasis ? (specBasis.items||[]).length : 0);
   document.getElementById('tc-req').textContent = reqN;
   document.getElementById('tc-exc').textContent = cmpData ? (cmpData.exceptions||[]).length : 0;
+  const libBadge = document.getElementById('tc-lib');
+  if(libBadge){
+    libBadge.textContent = libIndex.length;
+    libBadge.title = libIndex.length ? (libIndex.reduce((a,x)=>a+x.rows,0).toLocaleString()+' reference rows held on this computer') : '';
+  }
   const bsBadge = document.getElementById('tc-buy');
   if(bsBadge){
     const bs = cmpData ? buildBuySheet() : null;
@@ -2260,6 +2299,15 @@ function wireDrop(dropId, inputId, arr, listId){
   input.onchange = ()=>{ take(input.files); input.value=''; };
 }
 wireDrop('specDrop','specFile',specFiles,'specFilelist');
+(function wireLibraryDrop(){
+  const drop = document.getElementById('libDrop'), input = document.getElementById('libFile');
+  if(!drop || !input) return;
+  drop.onclick = ()=>input.click();
+  drop.ondragover = e=>{ e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = ()=>drop.classList.remove('over');
+  drop.ondrop = e=>{ e.preventDefault(); drop.classList.remove('over'); libImportFiles(e.dataTransfer.files); };
+  input.onchange = ()=>{ libImportFiles(input.files); input.value=''; };
+})();
 wireDrop('toDrop','toFile',toFiles,'toFilelist');
 
 function stopSpec(){ if(specAbort) specAbort.abort(); }
@@ -3998,6 +4046,286 @@ function copyExceptionsText(btn){
   navigator.clipboard.writeText(t).then(()=>flash(btn,'Copied ✓'), ()=>alert('Could not copy to the clipboard. Use Download Excel instead.'));
 }
 
+
+/* ============================= LIBRARY ===================================
+   Standing reference sheets: price lists, catalogues, procedures. These are
+   clean grids, so nothing here goes to the model. The browser parses them,
+   keeps them in IndexedDB, and searches them locally. A fifteen thousand row
+   sheet costs nothing to load, nothing to read, and opens instantly.
+   They are deliberately NOT tied to a project: a price list does not belong
+   to one bid. The column mapping is stored alongside each sheet so the
+   comparison can look items up in it later without anyone re-importing it.
+   ====================================================================== */
+const LIB_DB = 'modonix_library', LIB_STORE = 'sheets', LIB_PAGE = 50;
+let libIndex = [];          // {id, name, sheet, file, rows, cols, imported_at, roles}
+let libCache = {};          // id -> full record, loaded on demand
+let libView = {};           // id -> {q, page, open}
+
+function libOpenDb(){
+  return new Promise((resolve, reject)=>{
+    if(!('indexedDB' in window)) return reject(new Error('This browser has no local database, so reference sheets cannot be stored here.'));
+    const req = indexedDB.open(LIB_DB, 1);
+    req.onupgradeneeded = ()=>{ const db = req.result; if(!db.objectStoreNames.contains(LIB_STORE)) db.createObjectStore(LIB_STORE, { keyPath:'id' }); };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error || new Error('Could not open local storage.'));
+  });
+}
+function libTx(mode, fn){
+  return libOpenDb().then(db=>new Promise((resolve, reject)=>{
+    const tx = db.transaction(LIB_STORE, mode);
+    const store = tx.objectStore(LIB_STORE);
+    let req;
+    try{ req = fn(store); }catch(e){ reject(e); return; }
+    tx.oncomplete = ()=>{ db.close(); resolve(req && 'result' in req ? req.result : undefined); };
+    tx.onerror = ()=>{ db.close(); reject(tx.error || new Error('Local storage write failed. The sheet may be too large for the space this browser allows.')); };
+  }));
+}
+async function libPut(rec){ return libTx('readwrite', st=>st.put(rec)); }
+async function libGet(id){
+  if(libCache[id]) return libCache[id];
+  const rec = await libTx('readonly', st=>st.get(id));
+  if(rec) libCache[id] = rec;
+  return rec;
+}
+async function libDelete(id){
+  await libTx('readwrite', st=>st.delete(id));
+  delete libCache[id]; delete libView[id];
+  await libRefreshIndex();
+  renderLibrary(); updateCounts();
+}
+async function libRefreshIndex(){
+  try{
+    const all = await libTx('readonly', st=>st.getAll());
+    libIndex = (all||[]).map(r=>({ id:r.id, name:r.name, sheet:r.sheet, file:r.file,
+      rows:(r.rows||[]).length, cols:(r.cols||[]).length, imported_at:r.imported_at, roles:r.roles||{} }))
+      .sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  }catch(e){ libIndex = []; }
+  return libIndex;
+}
+
+// The heading row is whichever early row has the most filled cells with a comparably full row
+// under it. Real sheets carry a title block and a blank line or two above the actual headings.
+function libDetectHeader(aoa){
+  let best = 0, bestScore = -1;
+  const limit = Math.min(12, aoa.length);
+  for(let i=0;i<limit;i++){
+    const filled = (aoa[i]||[]).filter(c=>String(c==null?'':c).trim()!=='').length;
+    const below = (aoa[i+1]||[]).filter(c=>String(c==null?'':c).trim()!=='').length;
+    const score = filled + (below >= filled*0.6 ? 2 : 0);
+    if(score > bestScore){ bestScore = score; best = i; }
+  }
+  return best;
+}
+const LIB_ROLE_HINTS = {
+  description:['description','item description','product description','desc','item','product','material','name'],
+  part:['part','part no','part number','item no','item number','sku','catalog','catalog no','cat no','code','product no','mfr part'],
+  manufacturer:['manufacturer','mfr','make','brand','vendor','supplier'],
+  model:['model','model no','model number','series'],
+  price:['price','list','list price','net','net price','unit price','cost','each','amount'],
+  uom:['uom','unit','units','per'],
+  category:['category','group','class','type','division','section']
+};
+function libGuessRoles(cols){
+  const roles = {};
+  const norm = c => String(c||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  Object.keys(LIB_ROLE_HINTS).forEach(role=>{
+    let found = -1;
+    cols.forEach((c,i)=>{ if(found<0 && LIB_ROLE_HINTS[role].some(h=>norm(c)===h)) found = i; });
+    if(found<0) cols.forEach((c,i)=>{ const n = norm(c); if(found<0 && n && LIB_ROLE_HINTS[role].some(h=>n.indexOf(h)>=0)) found = i; });
+    if(found>=0) roles[role] = found;
+  });
+  return roles;
+}
+async function libImportFiles(list){
+  const status = document.getElementById('libStatus');
+  const files = Array.from(list||[]).filter(f=>/\.(xlsx|xlsm|xlsb|xls|csv|tsv)$/i.test(f.name));
+  if(!files.length){ status.textContent = 'Only spreadsheets belong in here: .xlsx, .xls or .csv.'; return; }
+  if(typeof XLSX === 'undefined'){ status.textContent = 'The spreadsheet library did not load. Check the connection and reload the page.'; return; }
+  let added = 0;
+  for(const f of files){
+    try{
+      status.textContent = 'Reading '+f.name+', this happens here and costs nothing...';
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(new Uint8Array(buf), { type:'array', cellDates:true });
+      for(const sheetName of wb.SheetNames){
+        const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, blankrows:false, defval:'', raw:false });
+        if(!aoa.length) continue;
+        const hi = libDetectHeader(aoa);
+        const cols = (aoa[hi]||[]).map((c,i)=>String(c==null?'':c).trim() || ('Column '+(i+1)));
+        const rows = aoa.slice(hi+1)
+          .map(r=>cols.map((_,i)=>String((r&&r[i])==null?'':r[i]).trim()))
+          .filter(r=>r.some(c=>c!==''));
+        if(!rows.length) continue;
+        const id = slugify(f.name)+'--'+slugify(sheetName)+'--'+fnv1a(f.name+sheetName+rows.length);
+        await libPut({ id, name:sheetName, file:f.name, sheet:sheetName, cols, rows,
+          header_row: hi+1, imported_at:new Date().toISOString(), roles: libGuessRoles(cols) });
+        delete libCache[id];
+        added++;
+        status.textContent = 'Stored '+sheetName+', '+rows.length.toLocaleString()+' rows.';
+      }
+    }catch(e){
+      console.error(e);
+      status.textContent = 'Could not read '+f.name+': '+e.message;
+    }
+  }
+  await libRefreshIndex();
+  renderLibrary(); updateCounts();
+  if(added) status.textContent = 'Added '+added+' sheet'+(added===1?'':'s')+'. The library now holds '+
+    libIndex.reduce((a,x)=>a+x.rows,0).toLocaleString()+' rows on this computer.';
+}
+function libSetRole(id, role, idx){
+  libGet(id).then(rec=>{
+    if(!rec) return;
+    rec.roles = rec.roles || {};
+    if(idx === '') delete rec.roles[role]; else rec.roles[role] = parseInt(idx,10);
+    libCache[id] = rec;
+    libPut(rec).then(libRefreshIndex);
+  });
+}
+function libToggle(id){
+  libView[id] = libView[id] || { q:'', page:0, open:false };
+  libView[id].open = !libView[id].open;
+  renderLibrary();
+}
+function libSearch(id, q){ libView[id] = libView[id]||{q:'',page:0,open:true}; libView[id].q = q; libView[id].page = 0; renderLibraryBody(id); }
+function libPage(id, delta){ const v = libView[id]; v.page = Math.max(0, v.page + delta); renderLibraryBody(id); }
+function libMatchRows(rec, q){
+  const term = String(q||'').trim().toLowerCase();
+  if(!term) return rec.rows;
+  const parts = term.split(/\s+/);
+  return rec.rows.filter(r=>{
+    const hay = r.join('  ').toLowerCase();
+    return parts.every(pt=>hay.indexOf(pt)>=0);
+  });
+}
+function libHi(text, q){
+  let out = esc(text);
+  const term = String(q||'').trim();
+  if(!term) return out;
+  term.split(/\s+/).filter(Boolean).forEach(pt=>{
+    const rx = new RegExp('('+pt.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');
+    out = out.replace(rx, '<mark>$1</mark>');
+  });
+  return out;
+}
+function renderLibraryBody(id){
+  const host = document.getElementById('libbody-'+id);
+  if(!host) return;
+  const rec = libCache[id];
+  if(!rec){ host.innerHTML = '<p class="hint">Loading...</p>'; return; }
+  const v = libView[id] || { q:'', page:0 };
+  const matched = libMatchRows(rec, v.q);
+  const pages = Math.max(1, Math.ceil(matched.length/LIB_PAGE));
+  if(v.page >= pages) v.page = pages-1;
+  const from = v.page*LIB_PAGE, slice = matched.slice(from, from+LIB_PAGE);
+  host.innerHTML =
+    '<div class="libpager">'+
+      '<b style="color:var(--ink)">'+matched.length.toLocaleString()+'</b> of '+rec.rows.length.toLocaleString()+' rows'+
+      (v.q?' matching "'+esc(v.q)+'"':'')+
+      ' &middot; showing '+(matched.length?(from+1).toLocaleString():'0')+' to '+Math.min(from+LIB_PAGE, matched.length).toLocaleString()+
+      '<span style="margin-left:auto"></span>'+
+      '<button class="btnsm" onclick="libPage(\''+id+'\',-1)" type="button"'+(v.page<=0?' disabled':'')+'>Back</button>'+
+      '<span>page '+(v.page+1)+' of '+pages+'</span>'+
+      '<button class="btnsm" onclick="libPage(\''+id+'\',1)" type="button"'+(v.page>=pages-1?' disabled':'')+'>Next</button>'+
+    '</div>'+
+    (matched.length
+      ? '<div class="tablewrap"><table class="lib"><thead><tr><th style="width:64px">Row</th>'+
+        rec.cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+
+        slice.map((r,i)=>'<tr><td class="pricebox">'+(from+i+1).toLocaleString()+'</td>'+
+          r.map(c=>'<td>'+libHi(c, v.q)+'</td>').join('')+'</tr>').join('')+
+        '</tbody></table></div>'
+      : '<div class="note info" style="margin:0">Nothing in this sheet matches that.</div>');
+}
+function renderLibrary(){
+  const box = document.getElementById('libList');
+  if(!box) return;
+  if(!libIndex.length){
+    box.innerHTML = '<div class="card"><p class="hint" style="margin:0">Nothing in the library yet. Drop a price list, a catalogue or a procedures sheet above and it stays here, on every job, until you remove it.</p></div>';
+    return;
+  }
+  const totalRows = libIndex.reduce((a,x)=>a+x.rows,0);
+  box.innerHTML = '<div class="note ok"><b>'+libIndex.length+' sheet'+(libIndex.length===1?'':'s')+' in the library, '+totalRows.toLocaleString()+' rows.</b> '+
+      'Held on this computer rather than in the project, so '+(libIndex.length===1?'it is':'they are')+' there whichever job you open. None of it has been sent anywhere.</div>'+
+    libIndex.map(ix=>{
+      const v = libView[ix.id] = libView[ix.id] || { q:'', page:0, open:false };
+      return '<div class="card">'+
+        '<div class="libhead">'+
+          '<span class="ln">'+esc(ix.name)+'</span>'+
+          '<span class="lm">'+ix.rows.toLocaleString()+' rows &middot; '+ix.cols+' columns &middot; from '+esc(ix.file)+'</span>'+
+          '<span style="margin-left:auto;display:flex;gap:8px">'+
+            '<button class="btnsm" onclick="libToggle(\''+ix.id+'\')" type="button">'+(v.open?'Hide':'Open')+'</button>'+
+            '<button class="btnsm" onclick="libExport(\''+ix.id+'\', this)" type="button">Download</button>'+
+            '<button class="btnsm" onclick="libConfirmDelete(\''+ix.id+'\')" type="button">Remove</button>'+
+          '</span>'+
+        '</div>'+
+        (v.open ? '<div id="libwrap-'+ix.id+'">'+
+            '<div class="libbar">'+
+              '<input type="text" placeholder="Search every column of this sheet" value="'+esc(v.q)+'" oninput="libSearch(\''+ix.id+'\', this.value)">'+
+              '<span class="hint" style="margin:0">Filters as you type. Several words all have to appear somewhere on the row.</span>'+
+            '</div>'+
+            '<div id="libbody-'+ix.id+'"><p class="hint">Loading...</p></div>'+
+            '<div style="margin-top:14px">'+
+              '<div class="collapsible-head" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i><h2>What each column means</h2>'+
+                '<span class="collapsible-summary">only matters once the comparison starts using this sheet</span></div>'+
+              '<div class="collapsible-body" style="display:none">'+
+                '<p class="hint" style="margin:0 0 8px">Guessed from the headings. Nothing uses this yet: it is stored so that when the comparison does start looking things up in here, it already knows which column is the description and which is the price rather than guessing every time.</p>'+
+                '<div class="rolegrid" id="roles-'+ix.id+'"></div>'+
+              '</div>'+
+            '</div>'+
+          '</div>' : '')+
+      '</div>';
+    }).join('');
+  libIndex.forEach(ix=>{
+    if(!libView[ix.id].open) return;
+    libGet(ix.id).then(rec=>{
+      renderLibraryBody(ix.id);
+      const rg = document.getElementById('roles-'+ix.id);
+      if(rg && rec) rg.innerHTML = Object.keys(LIB_ROLE_HINTS).map(role=>
+        '<div><label>'+role.charAt(0).toUpperCase()+role.slice(1)+'</label>'+
+        '<select onchange="libSetRole(\''+ix.id+'\',\''+role+'\',this.value)">'+
+          '<option value="">not in this sheet</option>'+
+          rec.cols.map((c,i)=>'<option value="'+i+'"'+((rec.roles||{})[role]===i?' selected':'')+'>'+esc(c)+'</option>').join('')+
+        '</select></div>').join('');
+    });
+  });
+}
+function libConfirmDelete(id){
+  const ix = libIndex.find(x=>x.id===id);
+  if(!ix) return;
+  if(confirm('Remove "'+ix.name+'" ('+ix.rows.toLocaleString()+' rows) from the library on this computer? The original file is untouched.')) libDelete(id);
+}
+function libExport(id, btn){
+  libGet(id).then(rec=>{
+    if(!rec || typeof XLSX === 'undefined') return;
+    const ws = XLSX.utils.aoa_to_sheet([rec.cols].concat(rec.rows));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, String(rec.sheet||'Sheet').slice(0,31));
+    XLSX.writeFile(wb, slugify(rec.name)+'.xlsx');
+    flash(btn);
+  });
+}
+// The hook the comparison will use later: find rows in the library whose description, part
+// number or model matches a term. It lives here, next to the data, so there is one definition
+// of what a lookup means rather than a slightly different one per caller.
+function libLookup(term, opts){
+  opts = opts || {};
+  const t = String(term||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  const words = t.split(' ').filter(w=>w.length>2);
+  if(!words.length) return [];
+  const out = [];
+  libIndex.forEach(ix=>{
+    const rec = libCache[ix.id];
+    if(!rec) return;
+    const roles = rec.roles||{};
+    const searchCols = [roles.description, roles.part, roles.model].filter(i=>i!==undefined);
+    rec.rows.forEach(r=>{
+      const hay = (searchCols.length ? searchCols.map(i=>r[i]||'') : r).join(' ').toLowerCase();
+      if(words.every(w=>hay.indexOf(w)>=0)) out.push({ sheet:ix.name, row:r, cols:rec.cols, roles });
+    });
+  });
+  return out.slice(0, opts.limit || 25);
+}
+
 /* ================================= ASK ================================== */
 function stopAsk(){ if(askAbort) askAbort.abort(); }
 function askPayload(){
@@ -4080,6 +4408,8 @@ setToMode('file');
 renderToOut();
 renderReqOut();
 updateCounts();
+// The library belongs to the machine, not to any project, so it loads on its own at startup.
+libRefreshIndex().then(()=>{ renderLibrary(); updateCounts(); });
 // Reopen whatever job was last open, without being asked. Reading the project back is a single
 // cheap GET against the Worker and costs nothing with Anthropic, and coming back to a half
 // empty screen you then have to go and re-populate by hand is its own kind of error.
