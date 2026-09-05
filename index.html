@@ -257,6 +257,9 @@
   .grp-h.collapsible-head .chev{font-style:normal;color:var(--muted);font-size:15px;transition:transform .15s;transform:rotate(-90deg);flex:none}
   .grp-h.collapsible-head.open .chev{transform:rotate(0deg)}
   .cmp-tools{display:flex;gap:8px;margin:0 0 12px}
+  table.matrix th.libcol{background:#0A3A63;border-left:2px solid var(--blue)}
+  table.matrix td.libcell{background:#F4F8FC;border-left:2px solid #CBDDEE}
+  table.matrix tr:hover td.libcell{background:#EDF4FA}
   .libhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .libhead .ln{font-family:var(--display);font-weight:600;font-size:16px;color:var(--navy)}
   .libhead .lm{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
@@ -2902,6 +2905,8 @@ async function runCompare(){
   ((specBasis&&specBasis.items)||[]).forEach(it=>push(catOf(it)));
   cats.sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b));
 
+  if(libIndex.length && !libLoadedAll) await libLoadAll();
+  libRowCache = {};
   cmpAbort = new AbortController();
   setCmpRunning(true);
   const prog = document.getElementById('cmpProg');
@@ -3038,6 +3043,8 @@ async function runCompare(){
     // Everything quoteFlags() found reading the documents themselves goes in too. These are
     // computed in plain code rather than asked of the model, so they are the same every run and
     // they do not depend on a category pass having succeeded.
+    // Your own price list is now a party to the comparison, so where everyone is over it, say so.
+    libraryExceptions(all.rows, read).forEach(x=>all.exceptions.push(x));
     read.forEach(sup=>{
       quoteFlags(sup.data).forEach(f=>{
         all.exceptions.push({ kind:f.kind, severity:f.severity, suppliers:[sup.name], lane:'quote',
@@ -3180,6 +3187,9 @@ function setAllCmpSections(open){
 function renderCompare(){
   const box = document.getElementById('cmpResults');
   if(!cmpData){ box.style.display='none'; return; }
+  // If the library was added after the last comparison, pull it into memory and redraw once so
+  // the column appears without anyone having to re-run anything.
+  if(libIndex.length && !libLoadedAll){ libLoadAll().then(()=>{ libRowCache = {}; renderCompare(); renderBuySheet(); }); }
   box.style.display='block';
   const sum = cmpData.summary || buildSummary(cmpData, suppliers.filter(s=>s.data));
   const names = (sum.per||[]).map(p=>p.supplier);
@@ -3270,6 +3280,9 @@ function renderCompare(){
         (flags.length ? '<div class="scflag">'+esc(flags.join(' · '))+'</div>' : '')+
       '</div>';
     }).join('')+'</div>'+
+    (libraryColumnActive() ? '<div class="note info"><b>Your library is the last column on every table below.</b> It is your own price for the same item, looked up in the '+
+      libIndex.reduce((a,x)=>a+x.rows,0).toLocaleString()+' rows you loaded, so each supplier price has something to be measured against rather than only the other two. '+
+      'It is not a quote from anyone and it never counts as a supplier covering a line.</div>' : '')+
     '<div class="note warn"><b>These totals are not yet comparable to each other.</b> Each one is only the sum of what that supplier actually put on paper. A cheaper number nearly always has a reason sitting in the exceptions list, so clear those first, then compare.</div>';
   }
 
@@ -3334,7 +3347,9 @@ function renderCompare(){
         '<span class="c">'+rows.length+' item'+(rows.length===1?'':'s')+(flagged?' &middot; '+flagged+' flagged':'')+'</span></div>'+
         '<div class="collapsible-body" style="display:block">'+
         '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:230px">Takeoff line</th>'+
-        names.map(n=>'<th class="supcol" style="min-width:190px">'+esc(n)+'</th>').join('')+'</tr></thead><tbody>'+
+        names.map(n=>'<th class="supcol" style="min-width:190px">'+esc(n)+'</th>').join('')+
+        (libraryColumnActive()?'<th class="supcol libcol" style="min-width:190px">Your library</th>':'')+
+        '</tr></thead><tbody>'+
         rows.map(r=>{
           const cells = names.map(n=>{
             const c = (r.suppliers||[]).find(x=>x.supplier===n) || { match:'unclear', confidence:'low', why:'this supplier was not given a verdict on this row' };
@@ -3346,7 +3361,7 @@ function renderCompare(){
               (price ? '<div class="pricebox">'+price+'</div>' : '')+
               (c.why ? '<div class="why">'+esc(c.why)+'</div>' : '')+
             '</td>';
-          }).join('');
+          }).join('') + (libraryColumnActive() ? libCellHtml(r) : '');
           return '<tr'+((r.issues||[]).length?' class="hasissue"':'')+'><td>'+
             '<div class="itemdesc">'+esc(r.takeoff_line || r.item)+'</div>'+
             '<div class="itemsub">'+[r.tag, r.spec_model, (r.required_qty? (r.required_qty+' '+(r.required_uom||'')) : ''), r.required_source].filter(Boolean).map(esc).join(' · ')+'</div>'+
@@ -3541,7 +3556,8 @@ function buildBuySheet(){
     const low = sorted[0] || null, high = sorted[sorted.length-1] || null;
     const spread = (low && high && sorted.length>1) ? (high.price - low.price) : 0;
     return { category:row.category||'Other', item:row.item||'', takeoff_line:row.takeoff_line||row.item||'',
-      tag:row.tag||'', required_qty:reqQty, required_uom:row.required_uom||'', required_source:row.required_source||'',
+      tag:row.tag||'', spec_model:row.spec_model||'',
+      required_qty:reqQty, required_uom:row.required_uom||'', required_source:row.required_source||'',
       offers, state, blockers, low, high, spread,
       spread_pct: (low && spread) ? (spread/low.price*100) : 0 };
   });
@@ -3626,6 +3642,7 @@ function qtyCellHtml(o, l){
   return '<span class="qchk bad">'+esc(q)+'<br>'+esc(o.qty_state)+'</span>';
 }
 function renderBuySheet(){
+  if(libIndex.length && !libLoadedAll){ libLoadAll().then(()=>{ libRowCache = {}; renderBuySheet(); }); }
   const box = document.getElementById('buyResults');
   const empty = document.getElementById('buyEmpty');
   const bs = buildBuySheet();
@@ -3685,6 +3702,7 @@ function renderBuySheet(){
           : 'They priced every comparable line.')+'</div>'+
       '</div>').join('')+
     '</div>'+
+    (libraryColumnActive() ? '<div class="note info" style="margin-top:0"><b>Your library price sits in its own column on the table below, and in none of the totals above.</b> It is what the item costs you, not an offer from anybody, so counting it as a supplier would invent money that no one has agreed to.</div>' : '')+
     '<div class="note info" style="margin-top:0">The package figures are only comparable to each other because the gaps have been filled at someone else&rsquo;s price. That filled portion is not a commitment from that supplier: it is what it would cost you to make their quote whole. The split figure ignores the cost of running several POs. Both are arithmetic, not advice.</div>'+
   '</div>';
 
@@ -3698,6 +3716,7 @@ function renderBuySheet(){
       '<div class="tablewrap"><table class="matrix"><thead><tr>'+
         '<th style="min-width:200px">Takeoff line</th><th style="width:120px">State</th>'+
         bs.names.map(n=>'<th class="supcol" style="min-width:150px">'+esc(n)+'</th>').join('')+
+        (libraryColumnActive()?'<th class="supcol libcol" style="min-width:150px">Your library</th>':'')+
         '<th class="supcol" style="width:160px">Low / high / spread</th></tr></thead><tbody>'+
       rows.map(l=>{
         const st = BUY_STATE[l.state];
@@ -3716,6 +3735,18 @@ function renderBuySheet(){
               (o.blocked.length?'<div class="why">'+esc(o.blocked[0])+'</div>':'')+
             '</td>';
           }).join('')+
+          (libraryColumnActive() ? (function(){
+            const m = libraryOffer({ takeoff_line:l.takeoff_line, item:l.item, spec_model:l.spec_model||'' });
+            if(!m) return '<td class="supcell libcell"><span class="mm miss">NOT IN LIBRARY</span></td>';
+            const mine = m.price ? m.price * (l.required_qty || 1) : 0;
+            const vs = (mine && l.low) ? Math.round((l.low.price/mine - 1)*100) : null;
+            return '<td class="supcell libcell">'+
+              (m.price ? '<div class="qtybox" style="font-size:13px">'+money(m.price)+(m.uom?(' / '+esc(m.uom)):'')+'</div>' : '<div class="itemsub">no price mapped</div>')+
+              (mine ? '<div class="itemsub">'+money(mine)+' for '+(l.required_qty||1)+' '+esc(l.required_uom||'')+'</div>' : '')+
+              (vs !== null ? '<div class="lowhigh"><span class="'+(vs>0?'sp':'lo')+'">'+(vs>0?('+'+vs):vs)+'%</span> vs the cheapest quote</div>' : '')+
+              (m.confidence!=='high'?'<div class="conf">'+esc(m.confidence)+' confidence match</div>':'')+
+            '</td>';
+          })() : '')+
           '<td class="supcell">'+(l.low
             ? '<div class="lowhigh"><span class="lo">'+money(l.low.price)+'</span> '+esc(l.low.supplier)+'</div>'+
               (l.high && l.spread ? '<div class="lowhigh"><span class="hi">'+money(l.high.price)+'</span> '+esc(l.high.supplier)+'</div>'+
@@ -3738,6 +3769,8 @@ function downloadBuyExcel(btn){
   const wb = XLSX.utils.book_new();
   const head = ['Category','Takeoff line','Tag','Qty','UOM','State','What blocks the comparison'];
   bs.names.forEach(n=>head.push(n+' price', n+' basis', n+' qty', n+' qty check', n+' blocked by'));
+  const bWithLib = libraryColumnActive();
+  if(bWithLib) head.push('Library unit price','Library UOM','Library for our qty','Library part','Library confidence');
   head.push('Low','Low supplier','High','High supplier','Spread','Spread %');
   const aoa = [head];
   bs.lines.forEach(l=>{
@@ -3746,12 +3779,17 @@ function downloadBuyExcel(btn){
       const o = l.offers.find(x=>x.supplier===n) || {};
       r.push(o.price!==null&&o.price!==undefined?o.price:'', o.price_note||'', o.qty||'', o.qty_state||'', (o.blocked||[]).join(' | '));
     });
+    if(bWithLib){
+      const m = libraryOffer({ takeoff_line:l.takeoff_line, item:l.item, spec_model:l.spec_model||'' });
+      r.push(m&&m.price?m.price:'', m?m.uom:'', (m&&m.price)?(m.price*(l.required_qty||1)):'', m?m.part:'', m?m.confidence:'not in library');
+    }
     r.push(l.low?l.low.price:'', l.low?l.low.supplier:'', l.high?l.high.price:'', l.high?l.high.supplier:'', l.spread||'', l.spread?Number(l.spread_pct.toFixed(1)):'');
     aoa.push(r);
   });
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols']=[{wch:16},{wch:40},{wch:8},{wch:8},{wch:8},{wch:16},{wch:44}].concat(
     bs.names.flatMap(()=>[{wch:12},{wch:26},{wch:8},{wch:16},{wch:34}]),
+    bWithLib ? [{wch:16},{wch:12},{wch:18},{wch:14},{wch:16}] : [],
     [{wch:12},{wch:16},{wch:12},{wch:16},{wch:11},{wch:10}]);
   XLSX.utils.book_append_sheet(wb, ws, 'Buy sheet');
 
@@ -3868,6 +3906,8 @@ function downloadCompareExcel(btn){
     // Sheet 2: the full matrix, one block of columns per supplier.
     const head = ['Category','Item','Tag','Specified as','Equal OK','Required qty','Required UOM','Required from','Issues'];
     names.forEach(n=>head.push(n+' match', n+' conf', n+' quoted as', n+' qty', n+' uom', n+' unit', n+' extended', n+' why'));
+    const withLib = libraryColumnActive();
+    if(withLib) head.push('Library price','Library UOM','Library part','Library description','Library confidence','Library match reason');
     const mx = [head];
     (cmpData.rows||[]).forEach(r=>{
       const row = [r.category||'', r.item||'', r.tag||'', r.spec_model||'', r.allows_equal===false?'NO':'', r.required_qty||'', r.required_uom||'', r.required_source||'', (r.issues||[]).join(' | ')];
@@ -3875,11 +3915,16 @@ function downloadCompareExcel(btn){
         const c = (r.suppliers||[]).find(x=>x.supplier===n) || {};
         row.push((c.match||'').toUpperCase(), c.confidence||'', c.quoted_as||'', c.qty||'', c.uom||'', c.unit_price||'', c.extended_price||'', c.why||'');
       });
+      if(withLib){
+        const m = libraryOffer(r);
+        row.push(m&&m.price?m.price:'', m?m.uom:'', m?m.part:'', m?m.description:'', m?m.confidence:'not in library', m?m.why:'');
+      }
       mx.push(row);
     });
     const ws2 = XLSX.utils.aoa_to_sheet(mx);
     ws2['!cols']=[{wch:16},{wch:34},{wch:8},{wch:24},{wch:9},{wch:12},{wch:12},{wch:14},{wch:30}].concat(
-      names.flatMap(()=>[{wch:12},{wch:8},{wch:38},{wch:9},{wch:8},{wch:11},{wch:12},{wch:34}]));
+      names.flatMap(()=>[{wch:12},{wch:8},{wch:38},{wch:9},{wch:8},{wch:11},{wch:12},{wch:34}]),
+      withLib ? [{wch:13},{wch:11},{wch:14},{wch:40},{wch:16},{wch:44}] : []);
     XLSX.utils.book_append_sheet(wb, ws2, 'Comparison');
 
     // Sheet 3: the coverage lane, takeoff against what the bid requires.
@@ -4142,6 +4187,7 @@ async function libImportFiles(list){
   if(!files.length){ status.textContent = 'Only spreadsheets belong in here: .xlsx, .xls or .csv.'; return; }
   if(typeof XLSX === 'undefined'){ status.textContent = 'The spreadsheet library did not load. Check the connection and reload the page.'; return; }
   let added = 0;
+  const notes = [];
   for(const f of files){
     try{
       status.textContent = 'Reading '+f.name+', this happens here and costs nothing...';
@@ -4149,13 +4195,13 @@ async function libImportFiles(list){
       const wb = XLSX.read(new Uint8Array(buf), { type:'array', cellDates:true });
       for(const sheetName of wb.SheetNames){
         const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, blankrows:false, defval:'', raw:false });
-        if(!aoa.length) continue;
+        if(!aoa.length){ notes.push('"'+sheetName+'" in '+f.name+' has no cells with anything in them, so nothing was stored from it.'); continue; }
         const hi = libDetectHeader(aoa);
         const cols = (aoa[hi]||[]).map((c,i)=>String(c==null?'':c).trim() || ('Column '+(i+1)));
         const rows = aoa.slice(hi+1)
           .map(r=>cols.map((_,i)=>String((r&&r[i])==null?'':r[i]).trim()))
           .filter(r=>r.some(c=>c!==''));
-        if(!rows.length) continue;
+        if(!rows.length){ notes.push('"'+sheetName+'" in '+f.name+' has a heading row ('+cols.slice(0,4).join(', ')+') but no rows of data under it, so nothing was stored from it.'); continue; }
         const id = slugify(f.name)+'--'+slugify(sheetName)+'--'+fnv1a(f.name+sheetName+rows.length);
         await libPut({ id, name:sheetName, file:f.name, sheet:sheetName, cols, rows,
           header_row: hi+1, imported_at:new Date().toISOString(), roles: libGuessRoles(cols) });
@@ -4163,15 +4209,30 @@ async function libImportFiles(list){
         added++;
         status.textContent = 'Stored '+sheetName+', '+rows.length.toLocaleString()+' rows.';
       }
+      if(!wb.SheetNames.length) notes.push(f.name+' opened but contains no sheets at all.');
     }catch(e){
       console.error(e);
-      status.textContent = 'Could not read '+f.name+': '+e.message;
+      // Storage refusals and parse failures both land here, and both used to be easy to miss.
+      const quota = /quota|storage|exceeded/i.test(String(e.message||''));
+      notes.push('Could not read '+f.name+': '+e.message+(quota?' This browser refused to store a file that size. Try splitting the workbook, or removing a sheet you no longer need.':''));
     }
   }
   await libRefreshIndex();
   renderLibrary(); updateCounts();
-  if(added) status.textContent = 'Added '+added+' sheet'+(added===1?'':'s')+'. The library now holds '+
-    libIndex.reduce((a,x)=>a+x.rows,0).toLocaleString()+' rows on this computer.';
+  // Something always gets said. A workbook where every sheet came back empty used to leave the
+  // status stuck on "Reading" with nothing on screen, which reads as the app ignoring you.
+  const totalRows = libIndex.reduce((a,x)=>a+x.rows,0);
+  if(added){
+    status.innerHTML = '<b style="color:var(--green)">Added '+added+' sheet'+(added===1?'':'s')+'.</b> The library now holds '+
+      totalRows.toLocaleString()+' rows on this computer.'+
+      (notes.length ? '<div class="note warn" style="margin-top:8px">Some sheets in that file were skipped:<ul style="margin:6px 0 0;padding-left:20px">'+notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul></div>' : '');
+  } else {
+    status.innerHTML = '<div class="note err" style="margin-top:8px"><b>Nothing was stored from that file.</b> '+
+      (notes.length
+        ? 'Here is exactly why:<ul style="margin:6px 0 0;padding-left:20px">'+notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul>'
+        : 'The file opened but no sheet in it produced a heading row with data underneath it.')+
+      '<div style="margin-top:6px">If the sheet plainly does have rows in it, the heading may sit further down than this looks, or the data may live in a pivot or a linked table rather than in cells.</div></div>';
+  }
 }
 function libSetRole(id, role, idx){
   libGet(id).then(rec=>{
@@ -4324,6 +4385,151 @@ function libLookup(term, opts){
     });
   });
   return out.slice(0, opts.limit || 25);
+}
+
+
+/* ==================== LIBRARY AS ANOTHER QUOTE ==========================
+   Your own price list, sitting in the comparison as one more column. Three
+   suppliers means it is the fourth column, four suppliers the fifth. It is
+   matched locally against the takeoff line, so it costs nothing and it is
+   instant, and like every other match in this tool it never happens silently:
+   the cell shows which library row it hit and how sure it is.
+   ====================================================================== */
+let libLoadedAll = false;
+let libIdx = {};   // sheet id -> { token: [rowIndex, ...] }, built once, kept in memory only
+
+async function libLoadAll(){
+  for(const ix of libIndex){ await libGet(ix.id); }
+  libLoadedAll = true;
+  return libIndex.length;
+}
+const LIB_STOP = new Set(['with','and','for','the','w','ea','each','of','to','in','on','per','a','an','or','by','as','no','not']);
+function libTokens(t){
+  return String(t==null?'':t).toLowerCase()
+    .replace(/[^a-z0-9./"'-]+/g,' ')
+    .split(/\s+/)
+    .map(w=>w.replace(/^[-'".]+|[-'".]+$/g,''))
+    // A bare digit is kept on purpose. In plumbing the single most identifying token on a line
+    // is often the size, and 2 in `2" copper` was being thrown away for being one character.
+    .filter(w=>(w.length>1 || /\d/.test(w)) && !LIB_STOP.has(w));
+}
+// A token carrying digits is a size or a model number, and those are what actually identify a
+// plumbing item. "2234.001" is worth far more than "water".
+function libWeight(tok){ return /\d/.test(tok) ? 3 : 1; }
+function libRowText(rec, r){
+  const roles = rec.roles || {};
+  const cols = [roles.description, roles.part, roles.model, roles.manufacturer].filter(i=>i!==undefined);
+  return (cols.length ? cols.map(i=>r[i]||'') : r).join(' ');
+}
+// An inverted index so a 15,000 row sheet does not get scanned line by line for every takeoff
+// item. Built once per sheet, held in memory, never written to storage.
+function libEnsureIndex(rec){
+  if(libIdx[rec.id]) return libIdx[rec.id];
+  const idx = {};
+  rec.rows.forEach((r,i)=>{
+    const seen = new Set(libTokens(libRowText(rec, r)));
+    seen.forEach(t=>{ (idx[t] = idx[t] || []).push(i); });
+  });
+  libIdx[rec.id] = idx;
+  return idx;
+}
+function libBestMatch(text){
+  const qTokens = libTokens(text);
+  if(!qTokens.length) return null;
+  const qWeightTotal = qTokens.reduce((a,t)=>a+libWeight(t), 0);
+  let best = null, runnersUp = 0;
+  libIndex.forEach(ix=>{
+    const rec = libCache[ix.id];
+    if(!rec || !rec.rows.length) return;
+    const idx = libEnsureIndex(rec);
+    // Candidates come from the most selective tokens only. Scoring every row against every
+    // takeoff line would be tens of millions of comparisons; this is a few hundred.
+    const cand = new Map();
+    qTokens.forEach(t=>{
+      const hits = idx[t];
+      if(!hits || hits.length > rec.rows.length*0.5) return;
+      hits.forEach(i=>cand.set(i, true));
+    });
+    if(!cand.size) return;
+    cand.forEach((_, i)=>{
+      const rowToks = new Set(libTokens(libRowText(rec, rec.rows[i])));
+      let hit = 0, digitHit = 0;
+      qTokens.forEach(t=>{ if(rowToks.has(t)){ hit += libWeight(t); if(/\d/.test(t)) digitHit++; } });
+      const score = hit / qWeightTotal;
+      // A match with no shared number is only believable when nearly every word lines up.
+      if(!digitHit && score < 0.7) return;
+      if(score < 0.45) return;
+      if(!best || score > best.score){
+        if(best && Math.abs(best.score - score) > 0.05) runnersUp = 0;
+        best = { sheetId: ix.id, sheet: ix.name, rowIndex: i, row: rec.rows[i], cols: rec.cols,
+                 roles: rec.roles||{}, score, digitHit };
+      } else if(best && Math.abs(best.score - score) <= 0.05) runnersUp++;
+    });
+  });
+  if(!best) return null;
+  best.confidence = best.score >= 0.85 ? 'high' : best.score >= 0.65 ? 'medium' : 'low';
+  best.alternatives = runnersUp;
+  const roles = best.roles;
+  best.price = roles.price !== undefined ? num(best.row[roles.price]) : 0;
+  best.uom = roles.uom !== undefined ? (best.row[roles.uom]||'') : '';
+  best.part = roles.part !== undefined ? (best.row[roles.part]||'') : '';
+  best.description = roles.description !== undefined ? (best.row[roles.description]||'') : best.row.join(' ').slice(0,80);
+  best.why = best.digitHit
+    ? ('matched on '+best.digitHit+' number'+(best.digitHit===1?'':'s')+' in the description, '+Math.round(best.score*100)+'% of the wording')
+    : ('matched on wording alone, '+Math.round(best.score*100)+'% of it, with no part or size number in common');
+  return best;
+}
+// One cached answer per takeoff line for the life of a render.
+let libRowCache = {};
+function libraryOffer(row){
+  if(!libIndex.length) return null;
+  const key = reqKey((row.takeoff_line||row.item||'')+'|'+(row.spec_model||''));
+  if(key in libRowCache) return libRowCache[key];
+  const m = libBestMatch([row.takeoff_line || row.item, row.spec_model].filter(Boolean).join(' '));
+  libRowCache[key] = m;
+  return m;
+}
+function libraryColumnActive(){ return libIndex.length > 0 && libLoadedAll; }
+function libCellHtml(row){
+  const m = libraryOffer(row);
+  if(!m) return '<td class="supcell libcell"><span class="mm miss">NOT IN LIBRARY</span>'+
+    '<div class="why">nothing in your price list looks like this line</div></td>';
+  const badge = m.confidence==='high' ? 'exact' : m.confidence==='medium' ? 'equiv' : 'unclear';
+  const label = m.confidence==='high' ? 'IN LIBRARY' : m.confidence==='medium' ? 'LIKELY' : 'POSSIBLE';
+  return '<td class="supcell libcell">'+
+    '<span class="mm '+badge+'">'+label+'</span>'+(m.confidence!=='high'?'<span class="conf">'+m.confidence+' confidence</span>':'')+
+    (m.price ? '<div class="qtybox" style="font-size:13px;margin-top:4px">'+money(m.price)+(m.uom?(' / '+esc(m.uom)):'')+'</div>' : '<div class="itemsub" style="margin-top:4px">no price column mapped</div>')+
+    '<div style="margin-top:2px;line-height:1.3">'+esc(String(m.description).slice(0,70))+'</div>'+
+    (m.part?'<div class="itemsub">'+esc(m.part)+'</div>':'')+
+    '<div class="why">'+esc(m.why)+(m.alternatives?('; '+m.alternatives+' other row'+(m.alternatives===1?'':'s')+' scored about the same'):'')+'</div>'+
+  '</td>';
+}
+// Deterministic, computed here rather than asked of the model: where every supplier who priced
+// a line is meaningfully above your own price for it, that is worth a phone call and it is
+// arithmetic, not a judgement.
+function libraryExceptions(rows, read){
+  if(!libraryColumnActive()) return [];
+  const out = [];
+  (rows||[]).forEach(row=>{
+    const m = libraryOffer(row);
+    if(!m || !m.price || m.confidence === 'low') return;
+    const priced = (row.suppliers||[]).filter(o=>o.match==='exact' || o.match==='equivalent')
+      .map(o=>({ supplier:o.supplier, unit: num(o.unit_price) || (num(o.qty) ? num(o.extended_price)/num(o.qty) : 0) }))
+      .filter(o=>o.unit > 0);
+    if(!priced.length) return;
+    const over = priced.filter(o=>o.unit > m.price * 1.1);
+    if(over.length !== priced.length) return;
+    const cheapest = priced.reduce((a,b)=>a.unit<b.unit?a:b);
+    const pct = Math.round((cheapest.unit/m.price - 1) * 100);
+    out.push({ kind:'OVER LIBRARY', severity: pct >= 25 ? 'high' : 'medium', suppliers: priced.map(o=>o.supplier),
+      lane:'quote', item: row.takeoff_line || row.item, category: row.category || 'Other',
+      headline: 'Every supplier who priced this is above your own price for it. The closest, '+cheapest.supplier+', is '+pct+'% over.',
+      detail: 'Your library has '+m.description+(m.part?(' ('+m.part+')'):'')+' at '+money(m.price)+(m.uom?(' per '+m.uom):'')+
+        '. Quoted: '+priced.map(o=>o.supplier+' '+money(o.unit)).join(', ')+'. Matched '+m.why+'.',
+      ask: 'Our price on this is '+money(m.price)+'. Can you get closer to that?',
+      _fromLibrary: true });
+  });
+  return out;
 }
 
 /* ================================= ASK ================================== */
