@@ -252,6 +252,11 @@
   .grp-h{display:flex;align-items:center;gap:10px;margin:0 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line)}
   .grp-h .t{font-family:var(--display);font-weight:600;font-size:15px;color:var(--navy)}
   .grp-h .c{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-left:auto}
+  .grp-h.collapsible-head{cursor:pointer;user-select:none}
+  .grp-h.collapsible-head:hover .t{text-decoration:underline}
+  .grp-h.collapsible-head .chev{font-style:normal;color:var(--muted);font-size:15px;transition:transform .15s;transform:rotate(-90deg);flex:none}
+  .grp-h.collapsible-head.open .chev{transform:rotate(0deg)}
+  .cmp-tools{display:flex;gap:8px;margin:0 0 12px}
 
   /* ---- exceptions ---- */
   .exc{
@@ -525,6 +530,9 @@
 
   <!-- ============================ TAB 4: COMPARE ============================ -->
   <div id="page-compare" style="display:none">
+    <div class="note info">
+      <b>What this button actually does.</b> It takes every line on your takeoff, one at a time, and goes looking for it on each supplier's quote. For each one it answers four questions and writes down its reasoning: <b>did they price this at all</b>, <b>is it the same product</b> or something else wearing a similar description, <b>is it the same quantity</b>, and <b>is it the same unit</b> so the numbers can even be put side by side. That is the first pass. The second pass turns around and checks your takeoff against what the bid documents require, looking for anything the job needs that never made it onto your list. Nothing is scored, nothing is priced, nothing is recommended: it is a read of what each supplier actually sent you against what you actually asked for.
+    </div>
     <div class="card">
       <h2>Run the comparison</h2>
       <div id="cmpReadiness"></div>
@@ -535,7 +543,7 @@
         <button class="stopbtn" id="cmpStopBtn" onclick="stopCompare()" type="button">Stop</button>
       </div>
       <div class="progline" id="cmpProg"></div>
-      <p class="hint" style="margin-top:12px"><b>Two passes, both anchored on the takeoff.</b> The first walks every takeoff line against what each supplier actually sent, one material category at a time, so each pass stays small enough to be accurate and a copper line is never asked to match itself against a toilet. The second is the one nobody does by hand: it checks the takeoff itself against what the bid documents, the schedule and the kickoff sheet call for. An item that never made it onto the takeoff will be missing from every quote and will look perfectly clean in a price comparison, so it has to be caught here or not at all.</p>
+      <p class="hint" style="margin-top:12px"><b>Why it runs in so many small passes rather than one big one.</b> Categories are kept apart so a copper line is never asked to match itself against a toilet, and each category is then walked 25 takeoff lines at a time. That is not caution for its own sake: the answer has to carry a row for every line with a verdict and a reason for every supplier, and asking for a hundred of those in one go runs the answer out of room part way through. If a chunk still comes back short, it gets split in half and retried on its own rather than the whole category being written off.</p>
     </div>
     <div id="cmpErr"></div>
     <div id="cmpResults"></div>
@@ -598,6 +606,10 @@
    ========================================================================== */
 const MODEL = "claude-sonnet-4-6";   // same model the Bid Requirements Reader uses
 const MAX_TOKENS = 20000;
+// The comparison writes a row per takeoff line with a cell and a reason per supplier, so its
+// answers are far longer than anything else this tool asks for. A shared 20k budget is what
+// silently killed the five biggest categories: the model ran out of room mid answer.
+const MAX_TOKENS_COMPARE = 48000;
 document.getElementById('modelchip').textContent = "model: " + MODEL;
 
 const CATEGORIES = ["Fixtures","Equipment","Pipe","Fittings","Valves","Hangers & Supports","Insulation","Specialties & Trim","Freight, Tax & Fees","Labor & Services","Other"];
@@ -894,7 +906,7 @@ async function loadCloudProject(btn){
       supKeys.forEach(k=>{
         const parsed = JSON.parse(latestByPhase[k].data);
         const s = newSupplierSlot(parsed.supplier || k.replace('p2_quote:',''));
-        s.data = parsed;
+        s.data = normalizeGroupCategories(parsed);
       });
       while(suppliers.length < 3) newSupplierSlot('');
       renderSuppliers();
@@ -1375,7 +1387,7 @@ function timeoutAfter(ms, signal){
 // Streams the response as Server-Sent Events rather than waiting for one complete body.
 // A slow-but-working generation keeps bytes flowing and is never mistaken for a stall;
 // only a true silence triggers the timeout, and that clock resets on every chunk.
-async function streamOneAttempt(key, content, systemPrompt, signal, idleTimeoutMs){
+async function streamOneAttempt(key, content, systemPrompt, signal, idleTimeoutMs, maxTokens){
   const fetchPromise = fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
     headers:{
@@ -1384,7 +1396,7 @@ async function streamOneAttempt(key, content, systemPrompt, signal, idleTimeoutM
       "anthropic-version":"2023-06-01",
       "anthropic-dangerous-direct-browser-access":"true"
     },
-    body:JSON.stringify({ model:MODEL, max_tokens:MAX_TOKENS, system:systemPrompt, messages:[{role:"user",content}], stream:true })
+    body:JSON.stringify({ model:MODEL, max_tokens:maxTokens||MAX_TOKENS, system:systemPrompt, messages:[{role:"user",content}], stream:true })
   });
   const res = await Promise.race([ raceWithStop(fetchPromise, signal), timeoutAfter(idleTimeoutMs, signal) ]);
   if(!res.ok || !res.body) return res;
@@ -1423,7 +1435,7 @@ async function streamOneAttempt(key, content, systemPrompt, signal, idleTimeoutM
   if(sawErrorEvent) return new Response(JSON.stringify(sawErrorEvent), {status: 529, headers:{'content-type':'application/json'}});
   return new Response(JSON.stringify({ content:[{type:'text', text: fullText}], stop_reason: stopReason }), {status:200, headers:{'content-type':'application/json'}});
 }
-async function fetchWithRetry(key, content, systemPrompt, signal, hintElId){
+async function fetchWithRetry(key, content, systemPrompt, signal, hintElId, maxTokens){
   const maxAttempts = 4;
   const delays = [5000, 15000, 30000];
   const retryableStatus = new Set([429, 500, 502, 503, 529]);
@@ -1431,7 +1443,7 @@ async function fetchWithRetry(key, content, systemPrompt, signal, hintElId){
   for(let attempt=0; attempt<maxAttempts; attempt++){
     let res;
     try{
-      res = await streamOneAttempt(key, content, systemPrompt, signal, IDLE_TIMEOUT_MS);
+      res = await streamOneAttempt(key, content, systemPrompt, signal, IDLE_TIMEOUT_MS, maxTokens);
     }catch(e){
       if(e.message !== 'REQUEST_TIMEOUT') throw e;
       if(attempt === maxAttempts-1) throw new Error("The request stalled — no data came back at all for over 90 seconds, "+maxAttempts+" attempts in a row. That is a dead connection rather than a slow answer. Try again once the connection is stable, or with a smaller batch.");
@@ -1460,11 +1472,11 @@ function parseJSON(t){
 }
 // Retries the WHOLE request if the API answers fine but the content doesn't parse as JSON.
 // A small formatting slip in the model's own output is an occasional, self-correcting failure.
-async function fetchAndParseJSON(key, content, systemPrompt, signal, hintElId, contextLabel){
+async function fetchAndParseJSON(key, content, systemPrompt, signal, hintElId, contextLabel, maxTokens){
   const maxParseAttempts = 3;
   let lastText = '';
   for(let attempt=0; attempt<maxParseAttempts; attempt++){
-    const res = await fetchWithRetry(key, content, systemPrompt, signal, hintElId);
+    const res = await fetchWithRetry(key, content, systemPrompt, signal, hintElId, maxTokens);
     if(!res.ok){
       const errtxt = await res.text();
       throw new Error(contextLabel+" — API "+res.status+": "+errtxt.slice(0,300));
@@ -1474,12 +1486,12 @@ async function fetchAndParseJSON(key, content, systemPrompt, signal, hintElId, c
     lastText = text;
     const parsed = parseJSON(text);
     if(parsed) return parsed;
-    if(data.stop_reason==='max_tokens') throw new Error("The response for "+contextLabel+" got cut off before it finished. Try again with a smaller batch, or split this supplier's quote up.");
+    if(data.stop_reason==='max_tokens') throw Object.assign(new Error("The answer for "+contextLabel+" ran out of room before it finished. There was too much to write about in one go."), { tooBig:true });
     if(attempt === maxParseAttempts-1) break;
     setHint(hintElId, "That response wasn't quite readable, retrying automatically (attempt "+(attempt+2)+" of "+maxParseAttempts+")…");
     await sleepWithStop(3000, signal);
   }
-  throw new Error("Could not read the response for "+contextLabel+" after "+maxParseAttempts+" tries. Raw output: "+lastText.slice(0,300));
+  throw Object.assign(new Error("Could not read the answer for "+contextLabel+" after "+maxParseAttempts+" tries. Raw output: "+lastText.slice(0,300)), { tooBig:true });
 }
 
 /* ================================ PROMPTS ================================= */
@@ -1721,6 +1733,29 @@ Return ONLY valid JSON, no prose, no markdown fences. Schema:
   ]
 }`;
 
+const SYSTEM_GAP_QUOTED = `The estimator's takeoff has no line for the requirements you are given. Before that is reported as a hole in the bid, there is one thing worth checking: a supplier may have quoted the item anyway, off their own count, without ever being asked for it.
+
+You are given a list of REQUIREMENTS the takeoff does not cover, and every line item the suppliers actually quoted. For each requirement, say whether any quoted line covers it.
+
+RULES:
+1. Judge on substance. A quoted line covers a requirement when it is plainly the same product or material, whatever the wording. It does not cover it when it is merely adjacent: copper pipe does not cover the requirement for dielectric unions, and a fixture does not cover the requirement for its carrier.
+2. Where more than one supplier quoted it, list them all. That is exactly the useful case.
+3. "confidence" is your own: use "low" freely where the descriptions are too thin to be sure.
+4. Never invent a quoted line. If nothing covers it, return an empty "covered_by" and that is the answer.
+5. No em dashes.
+
+Return ONLY valid JSON, no prose, no markdown fences. Schema:
+{
+  "results": [
+    { "requirement": "echoed back exactly as given to you",
+      "covered_by": [
+        { "supplier": "exact supplier name as given", "quoted_as": "their verbatim line",
+          "qty": 0, "uom": "", "price": 0, "confidence": "high | medium | low",
+          "why": "one short clause naming the evidence" }
+      ] }
+  ]
+}`;
+
 const SYSTEM_ASK_P2 = `You are answering one question about a construction bid's material package, using ONLY the data provided to you: the estimator's takeoff (which is the reference for the whole job), extracted supplier quote lines, the fixture/equipment schedule, the bid requirements and kickoff points, and the comparison result, whichever of those are present.
 
 RULES:
@@ -1920,7 +1955,7 @@ async function runSupplier(id){
       setHint(hintId, '');
       return;
     }
-    s.data = merged;
+    s.data = normalizeGroupCategories(merged);
     setHint(hintId, (merged.items||[]).length+' line'+((merged.items||[]).length===1?'':'s')+' read'+
       (merged._read.empty_batches.length ? (', '+merged._read.empty_batches.length+' batch'+(merged._read.empty_batches.length===1?'':'es')+' had nothing on them') : '')+'.');
     saveToCloud('p2_quote:'+slugify(s.name), merged);
@@ -2467,7 +2502,31 @@ function buildBidReqFrom(latestByPhase){
   const spec = reconstructFromItemRows(latestByPhase, 'spec_extraction');
   const dwg  = reconstructFromItemRows(latestByPhase, 'drawing_extraction');
   const kickoff = latestByPhase.kickoff_sheet ? JSON.parse(latestByPhase.kickoff_sheet.data) : null;
-  const pool = [].concat((spec&&spec.items)||[], (dwg&&dwg.items)||[]);
+  // Both reads come across, and each finding remembers which one it came from. The drawings
+  // matter at least as much as the spec here: hidden scope tends to live in a keynote, not in
+  // a written requirement, and there was no way to tell from the screen whether the drawings
+  // had actually been read for this job.
+  const specItems = ((spec&&spec.items)||[]).map(it=>Object.assign({}, it, { _src:'bid documents' }));
+  const dwgItems  = ((dwg&&dwg.items)||[]).map(it=>Object.assign({}, it, { _src:'drawings' }));
+  // Addenda. These are saved by the Bid Requirements Reader as their own rows, one per
+  // addendum, for the bid documents and separately for the drawings. They are the whole reason
+  // the reference can move under you mid bid, so they come across last and, where they collide
+  // with the original wording on the same topic, they win.
+  const addItems = [];
+  const addNames = [];
+  Object.keys(latestByPhase).forEach(k=>{
+    const isBid = k.indexOf('addendum:')===0, isDwg = k.indexOf('dwg-addendum:')===0;
+    if(!isBid && !isDwg) return;
+    let parsed;
+    try{ parsed = JSON.parse(latestByPhase[k].data); }catch(e){ return; }
+    const name = parsed._addendumName || k.replace(/^(dwg-)?addendum:/,'');
+    if(addNames.indexOf(name)<0) addNames.push(name);
+    (parsed.items||[]).forEach(it=>addItems.push(Object.assign({}, it, {
+      _src:'addendum', _addendum:name, _addendum_of: isDwg ? 'drawings' : 'bid documents' })));
+  });
+  // Addenda first, so that when the dedupe below meets the same requirement twice it keeps the
+  // addendum's version and discards the superseded original rather than the other way round.
+  const pool = [].concat(addItems, specItems, dwgItems);
   if(!pool.length && !kickoff) return null;
 
   // Re-running the Bid Requirements Reader on a job writes fresh batch rows alongside the old
@@ -2492,7 +2551,9 @@ function buildBidReqFrom(latestByPhase){
   unique.forEach(it=>{
     const text = [it.requirement, it.item, it.detail, it.topic].filter(Boolean).join(' ');
     const row = { requirement: it.requirement || it.item || '', detail: it.detail || '', topic: it.topic || '',
-                  source: it.source || it.reference || '', bucket: it.category || it.bucket || '' };
+                  source: it.source || it.reference || '', bucket: it.category || it.bucket || '',
+                  from: it._src || 'bid documents',
+                  addendum: it._addendum || '', addendum_of: it._addendum_of || '' };
     if(isMaterialRequirement(text)) kept.push(row); else dropped.push(row);
   });
 
@@ -2510,6 +2571,12 @@ function buildBidReqFrom(latestByPhase){
     kickoff_meta: kickoff ? { verdict:(kickoff.recommendation||{}).verdict||'', bid_due:kickoff.bid_due||'', scores:kickoff.scores||null } : null,
     at:new Date().toISOString(),
     _pool: pool.length, _dupes: dupes, _unique: unique.length, _dropped: dropped.length,
+    _spec_pool: specItems.length, _dwg_pool: dwgItems.length, _add_pool: addItems.length,
+    _addenda: addNames, _from_add: kept.filter(k=>k.from==='addendum').length,
+    _superseded: dupes,
+    _from_spec: kept.filter(k=>k.from==='bid documents').length,
+    _from_dwg: kept.filter(k=>k.from==='drawings').length,
+    _had_drawings: dwgItems.length > 0,
     // The whole discarded list, kept so it can be downloaded and audited. Rebuilt free from the
     // Worker on every load, so it is deliberately stripped out before saving rather than
     // pushing a few hundred KB of text into the database on every write.
@@ -2527,7 +2594,12 @@ function bidReqAccountingText(r){
   if(r._dupes) parts.push(r._dupes+' repeat'+(r._dupes===1?'':'s')+' dropped');
   if(r._dropped) parts.push(r._dropped+' not about material');
   parts.push((r.findings||[]).length+' kept to check the takeoff against');
-  return parts.join(', ')+'.'+(r._had_kickoff ? (' Plus '+(r.kickoff_points||[]).length+' point'+((r.kickoff_points||[]).length===1?'':'s')+' off the kickoff sheet.') : '');
+  let out = parts.join(', ')+'.';
+  out += ' Of those kept, '+(r._from_spec||0)+' came off the bid documents, '+(r._from_dwg||0)+' off the drawings'+
+    ((r._from_add||0) ? (' and '+r._from_add+' out of '+(r._addenda||[]).length+' addend'+((r._addenda||[]).length===1?'um':'a')+' ('+(r._addenda||[]).join(', ')+'), which override the original wording where they touch the same thing') : '');
+  out += r._had_kickoff ? (', plus '+(r.kickoff_points||[]).length+' point'+((r.kickoff_points||[]).length===1?'':'s')+' from the kickoff sheet.') : '.';
+  if(!r._had_drawings) out += ' No drawing findings are saved for this job, so nothing from the drawings has been checked. If the drawings were read in the Bid Requirements Reader under a different project name, that is where to look.';
+  return out;
 }
 
 // A dense yes/no pass in front of the expensive one. 150 short lines per call returning
@@ -2607,9 +2679,12 @@ function renderReqOut(){
   const tmeta = bidReq.triage_meta || null;
   const effective = (tri ? tri.length : f.length) + k.length;
   const heavy = effective > 200;
-  out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+f.length+' material bid requirement'+(f.length===1?'':'s')+'</b> and <b>'+k.length+' kickoff point'+(k.length===1?'':'s')+'</b> loaded. '+
+  out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+f.length+' material bid requirement'+(f.length===1?'':'s')+'</b> ('+(bidReq._from_spec||0)+' from the bid documents, '+(bidReq._from_dwg||0)+' from the drawings) and <b>'+k.length+' kickoff point'+(k.length===1?'':'s')+'</b> loaded. '+
       'The comparison will check the takeoff for anything here it has no line against.'+
       (bidReq.kickoff_meta&&bidReq.kickoff_meta.verdict ? ' Kickoff verdict on this job was <b>'+esc(bidReq.kickoff_meta.verdict)+'</b>.' : '')+'</div>'+
+    ((bidReq._addenda||[]).length ? '<div class="note warn" style="margin-top:0"><b>'+bidReq._addenda.length+' addend'+(bidReq._addenda.length===1?'um is':'a are')+' in play:</b> '+esc(bidReq._addenda.join(', '))+'. '+
+      (bidReq._from_add||0)+' of the requirements being checked came from '+(bidReq._addenda.length===1?'it':'them')+'. Where an addendum and the original spec say different things about the same item, the addendum is the one being used.</div>' : '')+
+    (bidReq._had_drawings===false ? '<div class="note err" style="margin-top:0"><b>No drawings have been read for this job.</b> Only the written bid documents are being checked against the takeoff. Hidden scope usually lives in a drawing keynote rather than in a written requirement, so this is worth fixing in the Bid Requirements Reader before you trust the coverage result.</div>' : '')+
     '<div class="note info" style="margin-top:0"><b>Where that number comes from:</b> '+esc(bidReqAccountingText(bidReq))+
       ' Nothing was thrown away quietly, and the discarded ones are listed below so you can check the filter is not eating something real.</div>'+
     (tri
@@ -2629,7 +2704,8 @@ function renderReqOut(){
       '</tbody></table></div></div>' : '')+
     '<div id="suplines-req" style="display:none;margin-top:12px"><div class="tablewrap"><table class="matrix"><thead><tr>'+
       '<th style="width:110px">From</th><th>What the bid requires</th><th style="width:150px">Source</th></tr></thead><tbody>'+
-      (tri||f).map(x=>'<tr><td><span class="catchip">bid docs</span></td><td><div class="itemdesc">'+esc(x.requirement)+'</div>'+
+      (tri||f).map(x=>'<tr><td><span class="catchip"'+(x.from==='addendum'?' style="background:var(--amber-tint);border-color:#EAD8A8;color:var(--amber)"':'')+'>'+
+        esc(x.from==='addendum' ? (x.addendum||'addendum') : x.from==='drawings' ? 'drawings' : 'bid docs')+'</span></td><td><div class="itemdesc">'+esc(x.requirement)+'</div>'+
         (x.detail?'<div class="itemsub">'+esc(x.detail)+'</div>':'')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>').join('')+
       k.map(x=>{
         // The label is often a trimmed version of the detail, so only show the detail when it
@@ -2684,7 +2760,7 @@ function renderReadiness(){
                           : 'No supplier quotes read yet, so only the coverage check will run.');
     bits.push(reqCount ? ('<b>'+reqCount+' bid requirement'+(reqCount===1?'':'s')+' to check,</b> so the takeoff itself gets checked for gaps.')
                        : 'Nothing pulled from the Bid Requirements Reader, so the takeoff will not be checked for gaps. That is the check that catches scope nobody quoted because nobody asked for it.');
-    const catCount = countCategoriesToRun();
+    const catCount = countComparePasses();
     const effReq = effectiveRequirementCount();
     const covPasses = Math.ceil(effReq/25);
     const needsTriage = bidReq && !bidReq.triaged && (bidReq.findings||[]).length > 200;
@@ -2696,8 +2772,8 @@ function renderReadiness(){
       bits.push('<b>This run starts with '+triagePasses+' cheap pass'+(triagePasses===1?'':'es')+'</b> to narrow '+((bidReq.findings||[]).length)+' requirements down to the ones that are really material, then coverage-checks whatever survives'+
         (read.length ? (', on top of '+catCount+' pass'+(catCount===1?'':'es')+' for the quotes') : '')+'.');
     } else {
-      bits.push('<b>This run will make '+((read.length?catCount:0)+covPasses)+' pass'+(((read.length?catCount:0)+covPasses)===1?'':'es')+':</b> '+
-        (read.length ? (catCount+' for the quotes, one per material category, and ') : '')+covPasses+' for the coverage check.');
+      bits.push('<b>This run will make about '+((read.length?catCount:0)+covPasses)+' pass'+(((read.length?catCount:0)+covPasses)===1?'':'es')+',</b> possibly a few more if any of them turn out to be too much to answer in one go and have to be split: '+
+        (read.length ? (catCount+' for the quotes, walking each category in chunks of 25 takeoff lines, and ') : '')+covPasses+' for the coverage check.');
     }
     html += '<div class="note info">'+bits.join('<br>')+'</div>';
     if(needsTriage) html += '<div class="note warn"><b>'+((bidReq.findings||[]).length)+' requirements is too many to check one by one, so this run will narrow them down first</b> with a cheap pass before the real coverage check. You can do that on tab 3 instead if you would rather see the shortlist before committing to the run.</div>';
@@ -2716,12 +2792,16 @@ function effectiveRequirementCount(){
   const k = bidReq ? ((bidReq.kickoff_points||[]).length) : 0;
   return f + k + (specBasis ? (specBasis.items||[]).length : 0);
 }
-function countCategoriesToRun(){
-  const seen = new Set();
-  ((takeoffData&&takeoffData.items)||[]).forEach(it=>seen.add(catOf(it)));
-  suppliers.filter(s=>s.data).forEach(s=>(s.data.items||[]).forEach(it=>seen.add(catOf(it))));
-  ((specBasis&&specBasis.items)||[]).forEach(it=>seen.add(catOf(it)));
-  return seen.size;
+// A category with more takeoff lines than one answer can hold is walked in chunks, so the
+// honest pass count is per chunk, not per category. Quoting the category count understated a
+// job this size by a factor of five.
+function countComparePasses(){
+  const LINES_PER_PASS = 25;
+  const perCat = {};
+  ((takeoffData&&takeoffData.items)||[]).forEach(it=>{ const c=catOf(it); perCat[c]=(perCat[c]||0)+1; });
+  suppliers.filter(s=>s.data).forEach(s=>(s.data.items||[]).forEach(it=>{ const c=catOf(it); if(!(c in perCat)) perCat[c]=0; }));
+  ((specBasis&&specBasis.items)||[]).forEach(it=>{ const c=catOf(it); if(!(c in perCat)) perCat[c]=0; });
+  return Object.values(perCat).reduce((a,n)=>a+Math.max(1, Math.ceil(n/LINES_PER_PASS)), 0);
 }
 function stopCompare(){ if(cmpAbort) cmpAbort.abort(); }
 function setCmpRunning(on){
@@ -2729,7 +2809,35 @@ function setCmpRunning(on){
   document.getElementById('cmpSpin').style.display = on ? 'inline-block' : 'none';
   document.getElementById('cmpStopBtn').classList.toggle('show', on);
 }
-function catOf(x){ return CATEGORIES.indexOf(x&&x.category)>=0 ? x.category : 'Other'; }
+// A tagged assembly is one thing. Left alone, WC-1's bowl is a Fixture, its P-trap is a
+// Fitting and its stops are Valves, so the assembly gets torn across three separate passes and
+// the group can never be matched whole against the takeoff line for that fixture. Every member
+// of a group takes the group's category.
+function catOf(x){
+  const c = (x && (x.effective_category || x.category)) || '';
+  return CATEGORIES.indexOf(c)>=0 ? c : 'Other';
+}
+// Fixture and equipment assemblies are named after the fixture, so where a group is a mix the
+// fixture-ish category wins rather than whichever component happens to be most numerous.
+const ASSEMBLY_PRIORITY = ['Fixtures','Equipment','Specialties & Trim','Valves','Pipe','Fittings','Hangers & Supports','Insulation','Labor & Services','Freight, Tax & Fees','Other'];
+function normalizeGroupCategories(d){
+  if(!d) return d;
+  const byTag = {};
+  (d.items||[]).forEach(it=>{
+    const tag = String(it.group_tag||'').trim().toLowerCase();
+    if(!tag) return;
+    (byTag[tag] = byTag[tag] || []).push(it);
+  });
+  Object.keys(byTag).forEach(tag=>{
+    const members = byTag[tag];
+    const present = new Set(members.map(it=>CATEGORIES.indexOf(it.category)>=0 ? it.category : 'Other'));
+    const winner = ASSEMBLY_PRIORITY.find(c=>present.has(c)) || 'Other';
+    members.forEach(it=>{ it.effective_category = winner; });
+    const g = (d.groups||[]).find(x=>String(x.tag||'').trim().toLowerCase()===tag);
+    if(g) g.category = winner;
+  });
+  return d;
+}
 async function runCompare(){
   const key = getKey();
   const errEl = document.getElementById('cmpErr');
@@ -2754,38 +2862,71 @@ async function runCompare(){
       takeoff_version: takeoffData.version, takeoff_lines:(takeoffData.items||[]).length,
       had_schedule: !!specBasis, had_bid_req: !!bidReq, at:new Date().toISOString() } };
   try{
-    /* ---- lane 1: quotes against the takeoff, one pass per category ---- */
+    /* ---- lane 1: quotes against the takeoff ----
+       One pass per category was too coarse. A category like Fixtures on a real job is a
+       hundred takeoff lines, and the answer has to carry a row for each with a cell and a
+       reason per supplier, which is far more writing than one answer has room for. So a
+       category is walked in chunks of takeoff lines, and any chunk that still runs out of
+       room is split in half and retried rather than being written off. ---- */
     if(read.length){
-      for(let i=0;i<cats.length;i++){
-        const cat = cats[i];
-        const payload = {
-          category: cat,
-          takeoff_items: (takeoffData.items||[]).filter(it=>catOf(it)===cat),
-          scheduled_items: ((specBasis&&specBasis.items)||[]).filter(it=>catOf(it)===cat),
-          suppliers: read.map(s=>{
-            const items = (s.data.items||[]).filter(it=>catOf(it)===cat);
-            const tags = new Set(items.map(it=>(it.group_tag||'').toLowerCase()).filter(Boolean));
-            return { supplier:s.name, items,
-              groups: (s.data.groups||[]).filter(g=>tags.has(String(g.tag||'').toLowerCase())),
-              price_basis: (s.data.quote_meta&&s.data.quote_meta.price_basis)||'',
-              multiplier: (s.data.quote_meta&&s.data.quote_meta.multiplier)||'' };
-          })
-        };
-        const quoted = payload.suppliers.reduce((a,x)=>a+x.items.length,0);
-        prog.textContent = 'Quotes, category '+(i+1)+' of '+cats.length+': '+cat+' — '+payload.takeoff_items.length+' takeoff line'+(payload.takeoff_items.length===1?'':'s')+' against '+quoted+' quoted line'+(quoted===1?'':'s')+'…';
-        if(!quoted && !payload.takeoff_items.length){ all._run.done.push(cat); continue; }
+      const supplierSlice = cat => read.map(s=>{
+        const items = (s.data.items||[]).filter(it=>catOf(it)===cat);
+        const tags = new Set(items.map(it=>(it.group_tag||'').toLowerCase()).filter(Boolean));
+        return { supplier:s.name, items,
+          groups: (s.data.groups||[]).filter(g=>tags.has(String(g.tag||'').toLowerCase())),
+          price_basis: (s.data.quote_meta&&s.data.quote_meta.price_basis)||'',
+          multiplier: (s.data.quote_meta&&s.data.quote_meta.multiplier)||'' };
+      });
+
+      async function comparePart(cat, takeoffPart, sched, sups, includeExtras, label, depth){
+        const payload = { category:cat, takeoff_items:takeoffPart, scheduled_items:sched, suppliers:sups,
+          instruction_note: includeExtras
+            ? 'These are the last takeoff lines in this category. As well as a row per takeoff line, add rows for any supplier line in this category that belongs to no takeoff line at all.'
+            : 'This is part of a larger category. Return a row for each takeoff line given here and nothing else. Do NOT add rows for supplier lines that belong to no takeoff line: those are handled separately, and adding them here would duplicate them.' };
         try{
           const r = await fetchAndParseJSON(key,
-            [{type:'text', text:'CATEGORY UNDER COMPARISON: '+cat+'\n\nDATA:\n'+JSON.stringify(payload)}],
-            SYSTEM_COMPARE, cmpAbort.signal, 'cmpProg', 'the '+cat+' comparison');
+            [{type:'text', text:'CATEGORY UNDER COMPARISON: '+cat+'\n\n'+payload.instruction_note+'\n\nDATA:\n'+JSON.stringify(payload)}],
+            SYSTEM_COMPARE, cmpAbort.signal, 'cmpProg', label, MAX_TOKENS_COMPARE);
           (r.rows||[]).forEach(row=>{ row.category = cat; all.rows.push(row); });
           (r.exceptions||[]).forEach(x=>{ x.category = cat; x.lane = 'quote'; all.exceptions.push(x); });
-          all._run.done.push(cat);
+          return true;
         }catch(e){
           if(e.name === 'AbortError') throw e;
+          // Ran out of room. Halve it and try again rather than losing the whole category,
+          // which is exactly what used to happen on the five biggest ones.
+          if(e.tooBig && takeoffPart.length > 1 && depth < 3){
+            const mid = Math.ceil(takeoffPart.length/2);
+            prog.textContent = label+' was too much to answer in one go, splitting it in half and retrying…';
+            const a = await comparePart(cat, takeoffPart.slice(0,mid), sched, sups, false, label+' (first half)', depth+1);
+            const b = await comparePart(cat, takeoffPart.slice(mid), sched, sups, includeExtras, label+' (second half)', depth+1);
+            return a && b;
+          }
           console.error(e);
-          all._run.failed.push({ category:cat, error:e.message, lane:'quote' });
+          all._run.failed.push({ category:cat, error:e.message, lane:'quote', part:label });
+          return false;
         }
+      }
+
+      const LINES_PER_PASS = 25;
+      for(let i=0;i<cats.length;i++){
+        const cat = cats[i];
+        const takeoffPart = (takeoffData.items||[]).filter(it=>catOf(it)===cat);
+        const sched = ((specBasis&&specBasis.items)||[]).filter(it=>catOf(it)===cat);
+        const sups = supplierSlice(cat);
+        const quoted = sups.reduce((a,x)=>a+x.items.length,0);
+        if(!quoted && !takeoffPart.length){ all._run.done.push(cat); continue; }
+        const chunks = [];
+        for(let k=0; k<Math.max(1, takeoffPart.length); k+=LINES_PER_PASS) chunks.push(takeoffPart.slice(k, k+LINES_PER_PASS));
+        let allOk = true;
+        for(let c=0; c<chunks.length; c++){
+          const label = 'the '+cat+' comparison'+(chunks.length>1?(', lines '+(c*LINES_PER_PASS+1)+' to '+Math.min((c+1)*LINES_PER_PASS, takeoffPart.length)):'');
+          prog.textContent = 'Quotes, category '+(i+1)+' of '+cats.length+': '+cat+
+            (chunks.length>1 ? (' — part '+(c+1)+' of '+chunks.length) : '')+
+            ' — '+chunks[c].length+' takeoff line'+(chunks[c].length===1?'':'s')+' against '+quoted+' quoted line'+(quoted===1?'':'s')+'…';
+          const ok = await comparePart(cat, chunks[c], sched, sups, c === chunks.length-1, label, 0);
+          allOk = allOk && ok;
+        }
+        if(allOk) all._run.done.push(cat);
       }
     } else {
       prog.textContent = 'No quotes loaded, skipping straight to the coverage check…';
@@ -2805,7 +2946,7 @@ async function runCompare(){
       }
     }
     const reqs = [].concat(
-      (((bidReq&&(bidReq.triaged||bidReq.findings))||[])).map(f=>({ requirement:f.requirement, detail:f.detail, from:'bid documents', source:f.source||f.topic||'' })),
+      (((bidReq&&(bidReq.triaged||bidReq.findings))||[])).map(f=>({ requirement:f.requirement, detail:f.detail, from:f.from||'bid documents', source:f.source||f.topic||'' })),
       ((specBasis&&specBasis.items)||[]).map(i=>({ requirement:[i.tag,i.description].filter(Boolean).join(' '), detail:[[i.basis_of_design_manufacturer,i.model].filter(Boolean).join(' '), (i.requirements||[]).join('; ')].filter(Boolean).join(' · '), from:'schedule', source:i.source||'' })),
       ((bidReq&&bidReq.kickoff_points)||[]).map(k=>({ requirement:k.label, detail:k.detail, from:'kickoff', source:k.source||'Kickoff Sheet' }))
     ).filter(r=>r.requirement);
@@ -2830,7 +2971,7 @@ async function runCompare(){
           const r = await fetchAndParseJSON(key,
             [{type:'text', text:'THE TAKEOFF (the estimator\'s own list, d=description q=quantity u=unit c=category):\n'+JSON.stringify(compactTakeoff)+
               '\n\nREQUIREMENTS TO CHECK FOR COVERAGE:\n'+JSON.stringify(batch)}],
-            SYSTEM_COVERAGE, cmpAbort.signal, 'cmpProg', 'the coverage check');
+            SYSTEM_COVERAGE, cmpAbort.signal, 'cmpProg', 'the coverage check, requirements '+(i+1)+' to '+Math.min(i+per, reqs.length), MAX_TOKENS_COMPARE);
           (r.checks||[]).forEach(c=>all.coverage.checks.push(c));
           (r.gaps||[]).forEach(g=>{
             all.coverage.gaps.push(g);
@@ -2855,6 +2996,62 @@ async function runCompare(){
           item:'This quote as a whole', category:'Quote terms', headline:f.headline, detail:f.detail, ask:f.ask, _fromDoc:true });
       });
     });
+    /* ---- lane 3: the leg that makes it a three way ----
+       The first two lanes each hold one end of the chain: the bid against the takeoff, and the
+       takeoff against the quotes. Joined on the takeoff line they already answer "the bid asks
+       for this, our line says that, here is what each supplier offered", and that join costs
+       nothing because both halves are already on screen. What it cannot answer is the case
+       where the takeoff has no line at all: there is nothing to join through. So the gaps, and
+       only the gaps, get one small pass of their own against every quoted line. That is the
+       difference between "your takeoff is missing dielectric unions" and "your takeoff is
+       missing dielectric unions and Ferguson quoted them anyway at $340". ---- */
+    const gapChecks = (all.coverage.checks||[]).filter(c=>c.verdict==='not covered' || c.verdict==='partial');
+    if(gapChecks.length && read.length){
+      const quotedLines = [];
+      read.forEach(sup=>(sup.data.items||[]).forEach(it=>quotedLines.push({
+        s: sup.name, d: it.description, m: [it.manufacturer,it.model].filter(Boolean).join(' '),
+        q: it.qty, u: it.uom, p: it.extended_price || it.unit_price || 0, t: it.group_tag||'' })));
+      const per = 20;
+      for(let i=0;i<gapChecks.length;i+=per){
+        const batch = gapChecks.slice(i, i+per);
+        prog.textContent = 'Checking whether anyone quoted the gaps anyway: '+(i+1)+' to '+Math.min(i+per, gapChecks.length)+' of '+gapChecks.length+'…';
+        try{
+          const r = await fetchAndParseJSON(key,
+            [{type:'text', text:'REQUIREMENTS THE TAKEOFF DOES NOT COVER:\n'+JSON.stringify(batch.map(c=>({ requirement:c.requirement, note:c.note, from:c.from })))+
+              '\n\nEVERY LINE THE SUPPLIERS QUOTED (s=supplier d=description m=manufacturer and model q=quantity u=unit p=price t=tag):\n'+JSON.stringify(quotedLines)}],
+            SYSTEM_GAP_QUOTED, cmpAbort.signal, 'cmpProg', 'the gap check, '+(i+1)+' to '+Math.min(i+per, gapChecks.length), MAX_TOKENS_COMPARE);
+          (r.results||[]).forEach(res=>{
+            const k = reqKey(res.requirement);
+            const target = gapChecks.find(c=>reqKey(c.requirement)===k);
+            if(target) target.quoted_anyway = (res.covered_by||[]).filter(x=>x && x.supplier);
+          });
+        }catch(e){
+          if(e.name === 'AbortError') throw e;
+          console.error(e);
+          all._run.failed.push({ category:'gap check', error:e.message, lane:'coverage' });
+        }
+      }
+      // Fold the answer back into the exceptions, because that is where it gets read.
+      (all.exceptions||[]).filter(x=>x.lane==='coverage').forEach(x=>{
+        const c = gapChecks.find(g=>reqKey(g.requirement)===reqKey(x.item));
+        if(!c || !(c.quoted_anyway||[]).length) return;
+        const who = c.quoted_anyway;
+        x.suppliers = who.map(w=>w.supplier);
+        // Only drop the severity when EVERY supplier picked it up on their own. If one of three
+        // spotted it, the other two numbers are still short by the price of it, which is a high
+        // severity problem wearing a reassuring hat.
+        const allOfThem = who.length >= read.length;
+        x.severity = allOfThem ? 'medium' : 'high';
+        x.headline = x.headline.replace(/\.$/,'')+', but '+who.map(w=>w.supplier).join(' and ')+
+          (allOfThem ? ' all quoted it anyway.' : ' quoted it anyway. The other '+(read.length-who.length)+' did not, so their numbers are short by it.');
+        x.detail = (x.detail||'')+' Quoted without being asked: '+who.map(w=>w.supplier+' — "'+(w.quoted_as||'')+'"'+(w.qty?(' '+w.qty+' '+(w.uom||'')):'')+(w.price?(' at '+money(w.price)):'')).join('; ')+'.';
+        x.ask = allOfThem
+          ? 'Everyone caught this on their own, but it is still not on the takeoff. Add it so the next revision goes out complete.'
+          : 'Add this to the takeoff and reissue, then ask '+read.filter(sp=>who.every(w=>w.supplier!==sp.name)).map(sp=>sp.name).join(' and ')+' whether their price includes it.';
+      });
+      all._run.gap_check = { checked: gapChecks.length, found: gapChecks.filter(c=>(c.quoted_anyway||[]).length).length };
+    }
+
     all._run.status = all._run.failed.length ? 'partial' : 'complete';
     all.summary = buildSummary(all, read);
     cmpData = all;
@@ -2922,6 +3119,16 @@ function covBadge(v){
   const p = map[v] || map['not a material item'];
   return '<span class="mm '+p[0]+'">'+p[1]+'</span>';
 }
+const HEAD  = '<div class="grp-h collapsible-head open" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i>';
+const HEADC = '<div class="grp-h collapsible-head" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i>';
+function setAllCmpSections(open){
+  document.querySelectorAll('#cmpResults .cmp-sec > .grp-h').forEach(h=>{
+    const body = h.nextElementSibling;
+    if(!body) return;
+    body.style.display = open ? 'block' : 'none';
+    h.classList.toggle('open', open);
+  });
+}
 function renderCompare(){
   const box = document.getElementById('cmpResults');
   if(!cmpData){ box.style.display='none'; return; }
@@ -2933,8 +3140,14 @@ function renderCompare(){
 
   let html = takeoffStaleBanner();
   if(run.status === 'partial'){
-    html += '<div class="note err"><b>PARTIAL RESULT — do not rely on this yet.</b> '+run.failed.length+' pass'+(run.failed.length===1?'':'es')+' did not finish: '+
-      run.failed.map(f=>esc(f.category)).join(', ')+'. Run the comparison again to fill '+(run.failed.length===1?'it':'them')+' in.</div>';
+    const byCat = {};
+    (run.failed||[]).forEach(f=>{ (byCat[f.category] = byCat[f.category] || []).push(f); });
+    html += '<div class="note err"><b>PARTIAL RESULT — do not rely on this yet.</b> '+run.failed.length+' pass'+(run.failed.length===1?'':'es')+' did not finish, so those categories are incomplete. '+
+      'Running the comparison again picks them up.'+
+      '<ul style="margin:8px 0 0;padding-left:20px">'+
+      Object.keys(byCat).map(cat=>'<li><b>'+esc(cat)+'</b>'+(byCat[cat][0].part?(' &middot; '+esc(byCat[cat][0].part)):'')+
+        '<div style="font-size:12.5px;margin-top:2px">'+esc(String(byCat[cat][0].error||'').slice(0,240))+'</div></li>').join('')+
+      '</ul></div>';
   }
   html += '<div class="summary">'+
     '<div class="proj"><div class="pl">Project</div><div class="pv">'+esc(projectName()||'Untitled project')+'</div>'+
@@ -2945,6 +3158,52 @@ function renderCompare(){
     '<div class="stat '+(sum.high_total?'warn':'good')+'"><div class="n">'+sum.high_total+'</div><div class="l">High severity</div></div>'+
     '<div class="stat"><div class="n">'+sum.exceptions_total+'</div><div class="l">Total exceptions</div></div>'+
   '</div>';
+
+  // The three way chain goes first, before any of the long tables. It is the answer to the
+  // question the other tabs only answer in pieces: the bid asked for it, our takeoff did or
+  // did not carry it, and this is what each supplier did with it.
+  const chain = buildChain();
+  let chainHtml = '';
+  if(chain && chain.links.length){
+    const cc = chain.counts;
+    chainHtml += '<div class="grp cmp-sec">'+HEADC+'<span class="t">Bid &rarr; takeoff &rarr; supplier</span>'+
+      '<span class="c">'+chain.links.length+' requirement'+(chain.links.length===1?'':'s')+' followed all the way through &middot; click to open</span></div>'+
+      '<div class="collapsible-body" style="display:none">'+
+      '<div class="pkg" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr))">'+
+        '<div class="pkgcard" style="border-top-color:var(--green)"><div class="pn">Clean all the way</div><div class="pv">'+cc.whole+'</div>'+
+          '<div class="pl">bid asked, takeoff carried it, everyone priced it</div></div>'+
+        '<div class="pkgcard" style="border-top-color:'+(cc.breaks_at_supplier?'#D89B2C':'var(--line-strong)')+'"><div class="pn">Breaks at the supplier</div><div class="pv">'+cc.breaks_at_supplier+'</div>'+
+          '<div class="pl">your takeoff had it; a supplier missed it, swapped it, or fudged it</div></div>'+
+        '<div class="pkgcard" style="border-top-color:'+(cc.takeoff_gap?'var(--rust)':'var(--line-strong)')+'"><div class="pn">Breaks at the takeoff</div><div class="pv">'+cc.takeoff_gap+'</div>'+
+          '<div class="pl">the bid asks for it and your list has no line for it</div></div>'+
+        '<div class="pkgcard" style="border-top-color:'+(cc.rescued?'var(--blue)':'var(--line-strong)')+'"><div class="pn">Missed but quoted anyway</div><div class="pv">'+cc.rescued+'</div>'+
+          '<div class="pl">not on your takeoff, but a supplier priced it off their own count</div></div>'+
+      '</div>'+
+      (cc.rescued ? '<div class="note info" style="margin-top:0"><b>'+cc.rescued+' of the takeoff gaps '+(cc.rescued===1?'was':'were')+' picked up by a supplier anyway.</b> They are worth adding to the takeoff and reissuing, because right now only the supplier who spotted '+(cc.rescued===1?'it':'them')+' has '+(cc.rescued===1?'it':'them')+' in their number, and the others do not.</div>' : '')+
+      '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:210px">What the bid asks for</th><th style="width:90px">From</th>'+
+        '<th style="min-width:170px">Our takeoff</th><th style="min-width:210px">What the suppliers did</th></tr></thead><tbody>'+
+      chain.links.slice().sort((a,b)=>{
+        const rank = l => l.verdict!=='covered' ? ((l.quoted_anyway||[]).length?1:0) : ((l.missing.length||l.substituted.length||l.unclear.length)?2:3);
+        return rank(a)-rank(b);
+      }).map(l=>{
+        const broken = l.verdict!=='covered' || l.missing.length || l.substituted.length || l.unclear.length;
+        return '<tr'+(broken?' class="hasissue"':'')+'>'+
+          '<td><div class="itemdesc">'+esc(l.requirement)+'</div>'+(l.source?'<div class="itemsub">'+esc(l.source)+'</div>':'')+'</td>'+
+          '<td><span class="catchip">'+esc(l.from||'')+'</span></td>'+
+          '<td class="supcell">'+covBadge(l.verdict)+(l.takeoff_line?'<div style="margin-top:4px;line-height:1.35">'+esc(l.takeoff_line)+'</div>':'<div class="why" style="color:var(--rust)">no line for it</div>')+'</td>'+
+          '<td class="supcell">'+
+            (l.verdict!=='covered'
+              ? ((l.quoted_anyway||[]).length
+                  ? '<span class="mm equiv">QUOTED ANYWAY</span><div style="margin-top:4px;line-height:1.35">'+esc(l.quoted_anyway.map(w=>w.supplier).join(', '))+'</div>'+
+                    '<div class="why">'+esc((l.quoted_anyway[0].quoted_as||'').slice(0,90))+'</div>'
+                  : '<span class="mm miss">NOBODY COULD</span><div class="why">it was never on the takeoff, so it never went out</div>')
+              : [ l.priced.length ? '<div><span class="mm exact">PRICED</span> '+esc(l.priced.join(', '))+'</div>' : '',
+                  l.substituted.length ? '<div><span class="mm sub">SUBBED</span> '+esc(l.substituted.join(', '))+'</div>' : '',
+                  l.unclear.length ? '<div><span class="mm unclear">UNCLEAR</span> '+esc(l.unclear.join(', '))+'</div>' : '',
+                  l.missing.length ? '<div><span class="mm miss">MISSED IT</span> '+esc(l.missing.join(', '))+'</div>' : '' ].join('')
+            )+'</td></tr>';
+      }).join('')+'</tbody></table></div></div></div>';
+  }
 
   if(names.length){
     html += '<div class="scorecards">'+(sum.per||[]).map(p=>{
@@ -2967,11 +3226,13 @@ function renderCompare(){
   }
 
   /* ---- coverage lane ---- */
+  let coverageHtml = '';
   if(cov.checked){
     const checks = (cmpData.coverage&&cmpData.coverage.checks)||[];
     const interesting = checks.filter(c=>c.verdict!=='not a material item');
-    html += '<div class="grp"><div class="grp-h"><span class="t">Does the takeoff cover what the bid asks for?</span>'+
-      '<span class="c">'+cov.checked+' requirement'+(cov.checked===1?'':'s')+' checked</span></div>'+
+    coverageHtml += '<div class="grp cmp-sec">'+HEADC+'<span class="t">Does the takeoff cover what the bid asks for?</span>'+
+      '<span class="c">'+cov.checked+' requirement'+(cov.checked===1?'':'s')+' checked'+((cov.not_covered||0)?(' &middot; '+cov.not_covered+' not covered'):'')+' &middot; click to open</span></div>'+
+      '<div class="collapsible-body" style="display:none">'+
       '<div class="note '+(cov.not_covered?'err':'ok')+'"><b>'+(cov.covered||0)+' covered, '+(cov.partial||0)+' partly covered, '+(cov.not_covered||0)+' not covered.</b> '+
         ((cov.not_material||0) ? (cov.not_material+' requirement'+(cov.not_material===1?' was':'s were')+' not something a material takeoff could cover (submittals, bonding, warranty terms) and '+(cov.not_material===1?'is':'are')+' hidden below. ') : '')+
         (cov.not_covered ? 'A line the takeoff never had will be missing from every quote and will look perfectly clean in the supplier comparison. This is the expensive kind of miss.' : 'Nothing the bid requires is missing from the takeoff.')+'</div>'+
@@ -2988,18 +3249,42 @@ function renderCompare(){
         '<div id="suplines-covna" style="display:none;margin-top:10px"><div class="tablewrap"><table class="matrix"><thead><tr><th>Requirement</th><th style="width:90px">From</th><th style="min-width:240px">Why it is not a takeoff item</th></tr></thead><tbody>'+
         checks.filter(c=>c.verdict==='not a material item').map(c=>'<tr><td class="itemdesc">'+esc(c.requirement)+'</td><td><span class="catchip">'+esc(c.from||'')+'</span></td><td class="supcell">'+esc(c.note||'')+'</td></tr>').join('')+
         '</tbody></table></div></div></div>' : '')+
-    '</div>';
+    '</div></div>';
   }
 
   /* ---- quote lane matrix, grouped by category ---- */
+  let matrixHtml = '';
   if(names.length){
     const byCat = {};
     (cmpData.rows||[]).forEach(r=>{ (byCat[r.category||'Other'] = byCat[r.category||'Other'] || []).push(r); });
-    Object.keys(byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).forEach(cat=>{
+
+    // A category whose passes failed produced no rows, so without this it simply would not
+    // appear, and a missing section reads as "nothing to see here" rather than "this never
+    // ran". That is how a whole category of fixtures went quiet and looked deliberate.
+    const failedCats = Array.from(new Set((run.failed||[]).filter(f=>f.lane!=='coverage').map(f=>f.category)));
+    failedCats.filter(c=>!byCat[c]).forEach(cat=>{
+      const takeoffN = ((takeoffData&&takeoffData.items)||[]).filter(it=>catOf(it)===cat).length;
+      const quotedN = suppliers.filter(s=>s.data).reduce((a,s)=>a+(s.data.items||[]).filter(it=>catOf(it)===cat).length, 0);
+      const why = (run.failed||[]).find(f=>f.category===cat);
+      matrixHtml += '<div class="grp cmp-sec">'+HEAD+'<span class="t" style="color:var(--rust)">'+esc(cat)+'</span>'+
+        '<span class="c">not compared</span></div>'+
+        '<div class="collapsible-body" style="display:block">'+
+        '<div class="note err" style="margin:0"><b>This category was never compared.</b> '+
+        takeoffN+' takeoff line'+(takeoffN===1?'':'s')+' and '+quotedN+' quoted line'+(quotedN===1?'':'s')+
+        ' in '+esc(cat)+' are missing from everything above and below: the matrix, the exceptions, the buy sheet and the downloads. '+
+        'Nothing here is a finding about those items, it is the absence of one.'+
+        (why ? '<div style="font-size:12.5px;margin-top:6px">'+esc(String(why.error||'').slice(0,220))+'</div>' : '')+
+        '<div style="margin-top:6px">Run the comparison again to fill it in.</div></div></div></div>';
+    });
+    const flaggedIn = cat => (byCat[cat]||[]).filter(r=>(r.issues||[]).length).length;
+    // Most to look at first. Reading order should follow where the problems are, not the order
+    // the categories happen to be listed in.
+    Object.keys(byCat).sort((a,b)=>flaggedIn(b)-flaggedIn(a) || CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).forEach(cat=>{
       const rows = byCat[cat];
       const flagged = rows.filter(r=>(r.issues||[]).length).length;
-      html += '<div class="grp"><div class="grp-h"><span class="t">'+esc(cat)+'</span>'+
+      matrixHtml += '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
         '<span class="c">'+rows.length+' item'+(rows.length===1?'':'s')+(flagged?' &middot; '+flagged+' flagged':'')+'</span></div>'+
+        '<div class="collapsible-body" style="display:block">'+
         '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:230px">Takeoff line</th>'+
         names.map(n=>'<th class="supcol" style="min-width:190px">'+esc(n)+'</th>').join('')+'</tr></thead><tbody>'+
         rows.map(r=>{
@@ -3021,9 +3306,18 @@ function renderCompare(){
             (r.spec_model && r.allows_equal===false ? '<div class="itemsub" style="color:var(--rust)">no approved equal permitted</div>' : '')+
             ((r.issues||[]).length ? '<div class="why" style="color:var(--rust)">'+esc(r.issues.join(' · '))+'</div>' : '')+
           '</td>'+cells+'</tr>';
-        }).join('')+'</tbody></table></div></div>';
+        }).join('')+'</tbody></table></div></div></div>';
     });
   }
+
+  // Reading order. What we asked for and what each supplier did with it comes first, because
+  // that is the thing being decided. The two long bid-side lists follow, folded shut, because
+  // they are reference: you go into them when something above sends you there.
+  html += '<div class="cmp-tools">'+
+      '<button class="btnsm" onclick="setAllCmpSections(true)" type="button">Expand all</button> '+
+      '<button class="btnsm" onclick="setAllCmpSections(false)" type="button">Collapse all</button>'+
+    '</div>'+
+    matrixHtml + chainHtml + coverageHtml;
 
   html += '<div class="resbar">'+
     '<button class="btn2 primary" onclick="downloadCompareExcel(this)" type="button">Download Excel</button>'+
@@ -3240,6 +3534,36 @@ function buildBuySheet(){
       nobody: lines.filter(l=>l.state==='nobody').length
     } };
 }
+// The chain, assembled in plain code from the two passes that already ran. No extra call: the
+// bid-to-takeoff verdict and the takeoff-to-supplier verdicts are joined on the takeoff line.
+function buildChain(){
+  if(!cmpData) return null;
+  const checks = (cmpData.coverage&&cmpData.coverage.checks)||[];
+  const rowsByLine = {};
+  (cmpData.rows||[]).forEach(r=>{ const k = reqKey(r.takeoff_line||r.item); if(k && !rowsByLine[k]) rowsByLine[k] = r; });
+  const links = checks.filter(c=>c.verdict!=='not a material item').map(c=>{
+    const row = c.takeoff_line ? rowsByLine[reqKey(c.takeoff_line)] : null;
+    const offers = row ? (row.suppliers||[]) : [];
+    return {
+      requirement: c.requirement, from: c.from, source: c.source, verdict: c.verdict, note: c.note,
+      takeoff_line: c.takeoff_line || '', row,
+      priced: offers.filter(o=>o.match==='exact' || o.match==='equivalent').map(o=>o.supplier),
+      substituted: offers.filter(o=>o.match==='substitution').map(o=>o.supplier),
+      missing: offers.filter(o=>o.match==='missing').map(o=>o.supplier),
+      unclear: offers.filter(o=>o.match==='unclear').map(o=>o.supplier),
+      quoted_anyway: c.quoted_anyway || []
+    };
+  });
+  return {
+    links,
+    counts: {
+      whole: links.filter(l=>l.verdict==='covered' && l.priced.length && !l.missing.length && !l.substituted.length && !l.unclear.length).length,
+      takeoff_gap: links.filter(l=>l.verdict!=='covered').length,
+      rescued: links.filter(l=>l.verdict!=='covered' && (l.quoted_anyway||[]).length).length,
+      breaks_at_supplier: links.filter(l=>l.verdict==='covered' && (l.missing.length || l.substituted.length || l.unclear.length)).length
+    }
+  };
+}
 const BUY_STATE = {
   head_to_head: ['h2h','HEAD TO HEAD'], sole_source:['sole','SOLE SOURCE'],
   not_comparable:['block','NOT COMPARABLE'], nobody:['none','NOBODY QUOTED IT']
@@ -3266,6 +3590,13 @@ function renderBuySheet(){
   const c = bs.counts;
 
   let html = takeoffStaleBanner();
+  const bRun = (cmpData && cmpData._run) || {};
+  if(bRun.status === 'partial'){
+    const cats = Array.from(new Set((bRun.failed||[]).filter(f=>f.lane!=='coverage').map(f=>f.category)));
+    html += '<div class="note err"><b>These numbers are for part of the job, not all of it.</b> '+
+      (cats.length ? ('Nothing from '+cats.map(esc).join(', ')+' is in any figure on this tab, because '+(cats.length===1?'that category':'those categories')+' never finished comparing. ') : '')+
+      'Every total below is short by whatever those items cost. Run the comparison again before using any of it.</div>';
+  }
   if(bs.openHigh) html += '<div class="note warn"><b>'+bs.openHigh+' high severity exception'+(bs.openHigh===1?' is':'s are')+' still open.</b> '+
     (bs.openHigh===1
       ? 'That is usually why a line below cannot be compared. Clearing it on tab 5 is what moves a line into the head-to-head column, and nothing here is final until it is cleared.'
@@ -3464,11 +3795,24 @@ function downloadCompareExcel(btn){
   try{
     const wb = XLSX.utils.book_new();
     const names = (cmpData.summary&&cmpData.summary.per||[]).map(p=>p.supplier);
+    const xRun = cmpData._run || {};
+    // A partial run has to announce itself on the first sheet. A spreadsheet outlives the
+    // screen it came from, and by the time someone opens this the on-screen warning is gone.
+    const partialCats = xRun.status === 'partial'
+      ? Array.from(new Set((xRun.failed||[]).filter(f=>f.lane!=='coverage').map(f=>f.category))) : [];
 
     // Sheet 1: the exceptions. First sheet on purpose, because it is the one that gets read.
-    const ex = [['Cleared','Severity','Lane','Kind','Category','Item','Supplier(s)','What is wrong','Detail','What to do / ask them']];
+    const ex = [];
+    if(xRun.status === 'partial'){
+      ex.push(['INCOMPLETE RUN — this workbook covers part of the job only.']);
+      if(partialCats.length) ex.push(['Never compared: '+partialCats.join(', ')+'. No item in those categories appears anywhere in this workbook.']);
+      ex.push(['Re-run the comparison and download again before pricing from this.']);
+      ex.push([]);
+    }
+    ex.push(['Cleared','Severity','Lane','Kind','Category','Item','Supplier(s)','What is wrong','Detail','What to do / ask them']);
     (cmpData.exceptions||[]).slice().sort((a,b)=>({high:0,medium:1,low:2}[a.severity]??3)-({high:0,medium:1,low:2}[b.severity]??3))
       .forEach(x=>ex.push([x._done?'X':'', (x.severity||'').toUpperCase(), x.lane==='coverage'?'Takeoff gap':'Quote issue', x.kind||'', x.category||'', x.item||'', (x.suppliers||[]).join(', '), x.headline||'', x.detail||'', x.ask||'']));
+    partialCats.forEach(c=>ex.push(['', 'UNKNOWN', 'Not compared', 'NEVER RAN', c, 'Everything in '+c, '', 'This category never finished comparing, so nothing in it was checked at all.', 'Absent from every sheet in this workbook.', 'Re-run the comparison.']));
     const ws1 = XLSX.utils.aoa_to_sheet(ex);
     ws1['!cols']=[{wch:8},{wch:10},{wch:13},{wch:15},{wch:16},{wch:28},{wch:20},{wch:52},{wch:56},{wch:56}];
     XLSX.utils.book_append_sheet(wb, ws1, 'Exceptions');
