@@ -416,6 +416,21 @@
         </div>
       </div>
       <div class="card">
+        <div class="collapsible-head" onclick="toggleCollapse(this)">
+          <i class="chev">&#9662;</i>
+          <h2>What is actually in the database for this job</h2>
+          <span class="collapsible-summary">one database, both tools</span>
+        </div>
+        <div class="collapsible-body" style="display:none">
+          <p class="hint" style="margin:0 0 10px">Both tools write to the same Worker and the same D1 table, keyed on the project name. The Bid Requirements Reader's rows and this tool's rows sit side by side; the <b>p2_</b> prefix is a name on a row, not a second database. This asks the Worker what it is holding right now.</p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button class="btn2 primary" onclick="inspectStorage(this)" type="button">Show me what is saved</button>
+            <span class="hint" id="inspectMsg" style="margin:0"></span>
+          </div>
+          <div id="inspectOut"></div>
+        </div>
+      </div>
+      <div class="card">
         <h2>Recover a Failed Save</h2>
         <p class="hint" style="margin:0 0 10px">If the red banner shows up and "Retry Save" doesn't get through, download the backup file it offers. Bring that file here, on any computer, any network, even weeks later, and push it into the cloud. Nothing gets re-read and nothing costs anything: this only moves data that has already been extracted.</p>
         <input type="file" id="backupFile" accept="application/json">
@@ -556,7 +571,7 @@
       <div id="cmpReadiness"></div>
       <div class="runbar" style="margin-top:6px">
         <button class="run" id="cmpBtn" onclick="runCompare()" type="button">
-          <span class="spin" id="cmpSpin"></span> Compare the quotes
+          <span class="spin" id="cmpSpin"></span> <span id="cmpBtnLabel">Compare the quotes</span>
         </button>
         <button class="stopbtn" id="cmpStopBtn" onclick="stopCompare()" type="button">Stop</button>
       </div>
@@ -828,7 +843,7 @@ async function saveToCloud(phase, data){
   }catch(e){
     cloudStatus('Could not reach the Worker to save. This tab\'s results are still fine locally.', true);
     lastFailedSave = { phase, data };
-    showCloudFailBanner('"'+phase+'" was NOT saved to the cloud — could not reach the Worker. This happens behind a VPN or a restrictive network. Download the backup now so this result isn\'t lost.');
+    showCloudFailBanner('"'+phase+'" did not reach the database — the Worker could not be contacted. Nothing is wrong with the setup: this is the same database the Bid Requirements Reader uses, and the connection dropped on the way. The result is still here in this tab. Retry Save now, or take the backup.');
     autoBackupOnFirstFailure(phase, data);
     return false;
   }
@@ -1006,6 +1021,68 @@ async function loadCloudProject(btn){
   }catch(e){
     cloudStatus(e.message, true);
     setProjectBar(e.message, true);
+  }finally{
+    btn.disabled = false; btn.textContent = o;
+  }
+}
+// Reads back exactly what the Worker is holding for this project and shows it. Written because
+// "did that save or not" is not a question anyone should have to guess the answer to, and
+// because it settles whether the two tools really do share one database.
+const PHASE_LABELS = [
+  [/^spec_extraction_items:/, 'Bid Requirements Reader', 'Spec findings (one batch)'],
+  [/^spec_extraction$/, 'Bid Requirements Reader', 'Spec extraction'],
+  [/^drawing_extraction_items:/, 'Bid Requirements Reader', 'Drawing findings (one batch)'],
+  [/^drawing_extraction$/, 'Bid Requirements Reader', 'Drawing extraction'],
+  [/^checklist_/, 'Bid Requirements Reader', 'Checklist coverage'],
+  [/^ask_scan_/, 'Bid Requirements Reader', 'Checklist Q&A'],
+  [/^kickoff_sheet$/, 'Bid Requirements Reader', 'Kickoff sheet'],
+  [/^dwg-addendum:/, 'Bid Requirements Reader', 'Drawing addendum'],
+  [/^addendum:/, 'Bid Requirements Reader', 'Addendum'],
+  [/^p2_takeoff$/, 'Quote Comparison', 'The takeoff'],
+  [/^p2_quote:/, 'Quote Comparison', 'A supplier quote'],
+  [/^p2_bid_requirements$/, 'Quote Comparison', 'Bid requirements, pulled and narrowed'],
+  [/^p2_spec_basis$/, 'Quote Comparison', 'Fixture schedule'],
+  [/^p2_comparison$/, 'Quote Comparison', 'The comparison result']
+];
+function describePhase(phase){
+  for(const [rx, tool, what] of PHASE_LABELS) if(rx.test(phase)) return { tool, what };
+  return { tool:'unknown', what:'' };
+}
+async function inspectStorage(btn){
+  const msg = document.getElementById('inspectMsg'), out = document.getElementById('inspectOut');
+  msg.style.color = ''; out.innerHTML = '';
+  const o = btn.textContent; btn.disabled = true; btn.textContent = 'Asking the Worker…';
+  try{
+    const { rows, latestByPhase } = await fetchProjectRows();
+    if(!rows.length){
+      out.innerHTML = '<div class="note warn" style="margin-top:12px"><b>The Worker answered, and it is holding nothing at all under "'+esc(projectName())+'".</b> The connection is fine, so this is a project name that has never been written to, or a different spelling from the one used in the other tool.</div>';
+      msg.textContent = 'Reached the Worker. No rows for this name.';
+      return;
+    }
+    const list = Object.keys(latestByPhase).map(ph=>{
+      const r = latestByPhase[ph];
+      const d = describePhase(ph);
+      return { phase:ph, tool:d.tool, what:d.what, bytes:String(r.data||'').length, when:r.created_at||r.updated_at||'' };
+    }).sort((a,b)=>a.tool.localeCompare(b.tool) || a.phase.localeCompare(b.phase));
+    const byTool = {};
+    list.forEach(x=>{ (byTool[x.tool] = byTool[x.tool]||[]).push(x); });
+    const totalBytes = list.reduce((a,x)=>a+x.bytes,0);
+    const kb = n => n > 1048576 ? ((n/1048576).toFixed(1)+' MB') : (Math.max(1, Math.round(n/1024))+' KB');
+    out.innerHTML = '<div class="note ok" style="margin-top:12px"><b>'+list.length+' row'+(list.length===1?'':'s')+' stored for "'+esc(projectName())+'", '+kb(totalBytes)+' in total, in one database.</b> '+
+        Object.keys(byTool).map(t=>byTool[t].length+' from the '+esc(t)).join(' and ')+'.</div>'+
+      '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:190px">Written by</th><th style="width:230px">Row name</th><th>What it is</th><th style="width:90px">Size</th></tr></thead><tbody>'+
+      list.map(x=>'<tr'+(x.tool==='unknown'?' class="hasissue"':'')+'>'+
+        '<td><span class="catchip">'+esc(x.tool)+'</span></td>'+
+        '<td class="pricebox">'+esc(x.phase)+'</td>'+
+        '<td>'+esc(x.what || 'not written by either tool, or written by an older version')+'</td>'+
+        '<td class="qtybox">'+kb(x.bytes)+'</td></tr>').join('')+
+      '</tbody></table></div>'+
+      (latestByPhase.p2_comparison
+        ? '<div class="note ok" style="margin-top:12px"><b>The comparison result is in there.</b> Loading this project on any machine brings it back.</div>'
+        : '<div class="note warn" style="margin-top:12px"><b>There is no comparison result stored for this job yet.</b> Either it has not been run, or the last save did not get through. If the tab that ran it is still open, the red banner\'s Retry Save will push it up now.</div>');
+    msg.textContent = 'Read straight from the Worker just now.';
+  }catch(e){
+    msg.textContent = e.message; msg.style.color = '#B4451F';
   }finally{
     btn.disabled = false; btn.textContent = o;
   }
@@ -1446,7 +1523,9 @@ async function streamOneAttempt(key, content, systemPrompt, signal, idleTimeoutM
       try{
         chunk = await Promise.race([ raceWithStop(reader.read(), signal), timeoutAfter(idleTimeoutMs, signal) ]);
       }catch(e){
-        if(e.message === 'REQUEST_TIMEOUT'){ try{ reader.cancel(); }catch(_){} }
+        try{ reader.cancel(); }catch(_){}
+        // A drop mid-stream is the same problem as a drop at the start, and is retried the
+        // same way rather than being treated as a permanent failure of the whole pass.
         throw e;
       }
       const { done, value } = chunk;
@@ -1473,8 +1552,8 @@ async function streamOneAttempt(key, content, systemPrompt, signal, idleTimeoutM
   return new Response(JSON.stringify({ content:[{type:'text', text: fullText}], stop_reason: stopReason }), {status:200, headers:{'content-type':'application/json'}});
 }
 async function fetchWithRetry(key, content, systemPrompt, signal, hintElId, maxTokens){
-  const maxAttempts = 4;
-  const delays = [5000, 15000, 30000];
+  const maxAttempts = 6;
+  const delays = [4000, 10000, 20000, 40000, 60000];
   const retryableStatus = new Set([429, 500, 502, 503, 529]);
   const IDLE_TIMEOUT_MS = 90000;
   for(let attempt=0; attempt<maxAttempts; attempt++){
@@ -1482,10 +1561,19 @@ async function fetchWithRetry(key, content, systemPrompt, signal, hintElId, maxT
     try{
       res = await streamOneAttempt(key, content, systemPrompt, signal, IDLE_TIMEOUT_MS, maxTokens);
     }catch(e){
-      if(e.message !== 'REQUEST_TIMEOUT') throw e;
-      if(attempt === maxAttempts-1) throw new Error("The request stalled — no data came back at all for over 90 seconds, "+maxAttempts+" attempts in a row. That is a dead connection rather than a slow answer. Try again once the connection is stable, or with a smaller batch.");
+      if(e.name === 'AbortError') throw e;
+      const stalled = e.message === 'REQUEST_TIMEOUT';
+      // A dropped connection surfaces as a thrown TypeError, not as a status code, so it used
+      // to sail straight past all of this and kill the pass on the first blip. On an office
+      // network or a VPN that is not an exceptional event, it is Tuesday.
+      const dropped = /failed to fetch|network error|networkerror|load failed|connection|err_network|err_internet/i.test(String(e.message||''));
+      if(!stalled && !dropped) throw e;
+      if(attempt === maxAttempts-1) throw new Error(stalled
+        ? "The request stalled with no data at all for over 90 seconds, "+maxAttempts+" times running. That is a dead connection rather than a slow answer."
+        : "The connection dropped "+maxAttempts+" times running while sending this ("+e.message+"). Everything already finished is kept; run the comparison again when the connection is steadier and it picks up what is missing.");
       const waitMs = delays[Math.min(attempt, delays.length-1)];
-      setHint(hintElId, 'That request stalled with no data at all, waiting '+Math.round(waitMs/1000)+'s and retrying automatically (attempt '+(attempt+2)+' of '+maxAttempts+')…');
+      setHint(hintElId, (stalled ? 'That request stalled with no data at all' : 'The connection dropped ('+e.message+')')+
+        ', waiting '+Math.round(waitMs/1000)+'s and trying again (attempt '+(attempt+2)+' of '+maxAttempts+')…');
       await sleepWithStop(waitMs, signal);
       continue;
     }
@@ -2811,9 +2899,13 @@ function renderReadiness(){
                           : 'No supplier quotes read yet, so only the coverage check will run.');
     bits.push(reqCount ? ('<b>'+reqCount+' bid requirement'+(reqCount===1?'':'s')+' to check,</b> so the takeoff itself gets checked for gaps.')
                        : 'Nothing pulled from the Bid Requirements Reader, so the takeoff will not be checked for gaps. That is the check that catches scope nobody quoted because nobody asked for it.');
-    const catCount = countComparePasses();
+    const priorRun0 = (cmpData && cmpData._run) || null;
+    const canResume0 = isResumableRun(priorRun0) && takeoffData
+      && priorRun0.takeoff_version === takeoffData.version
+      && (priorRun0.suppliers||[]).slice().sort().join('|') === read.map(s=>s.name).sort().join('|');
+    const catCount = countComparePasses(canResume0 ? (priorRun0.done||[]) : []);
     const effReq = effectiveRequirementCount();
-    const covPasses = Math.ceil(effReq/25);
+    const covPasses = countCoveragePassesLeft(canResume0 ? cmpData : null);
     const needsTriage = bidReq && !bidReq.triaged && (bidReq.findings||[]).length > 200;
     if(bidReq && bidReq.triaged) bits.push('Requirements already narrowed to <b>'+bidReq.triaged.length+'</b> real material items out of '+((bidReq.findings||[]).length)+'.');
     const triagePasses = needsTriage ? Math.ceil((bidReq.findings||[]).length/150) : 0;
@@ -2831,7 +2923,27 @@ function renderReadiness(){
     else if(covPasses > 12) html += '<div class="note warn"><b>The coverage check alone is '+covPasses+' passes.</b> That is a long run and it costs real money. Worth a look at tab 3 first.</div>';
     if(read.length===1) html += '<div class="note warn">Only one quote is loaded. It still gets checked line by line against the takeoff, but there is nothing to compare it against supplier to supplier.</div>';
   }
+  // If the last run stopped part way, say plainly that this one resumes rather than restarts.
+  const pr = (cmpData && cmpData._run) || null;
+  const resumable = isResumableRun(pr) && takeoffData && pr.takeoff_version === takeoffData.version
+    && (pr.suppliers||[]).slice().sort().join('|') === read.map(s=>s.name).sort().join('|');
+  if(resumable){
+    const leftCats = (pr.categories||[]).filter(c=>(pr.done||[]).indexOf(c)<0);
+    const doneChecks = ((cmpData.coverage&&cmpData.coverage.checks)||[]).length;
+    const covLeft = countCoveragePassesLeft(cmpData);
+    const quoteLeft = countComparePasses(pr.done||[]);
+    html += '<div class="note warn"><b>The last run stopped part way. This carries on from there rather than starting over.</b>'+
+      '<div style="margin-top:6px"><b>Already done and being kept:</b> '+((pr.done||[]).length)+' categor'+((pr.done||[]).length===1?'y':'ies')+
+        (leftCats.length ? (' ('+(pr.done||[]).map(esc).join(', ')+')') : ' — all of them')+', '+doneChecks+' coverage checks, '+
+        ((cmpData.rows||[]).length)+' item rows. None of it is run again.</div>'+
+      '<div style="margin-top:4px"><b>Still to do:</b> '+
+        (quoteLeft ? (quoteLeft+' quote pass'+(quoteLeft===1?'':'es')+' ('+leftCats.map(esc).join(', ')+')') : 'no quote passes, every category finished')+
+        ' and '+covLeft+' coverage pass'+(covLeft===1?'':'es')+
+        ((pr.failed||[]).some(f=>f.category==='gap check') ? ', plus the gap check' : '')+'.</div></div>';
+  }
   el.innerHTML = html;
+  const lbl = document.getElementById('cmpBtnLabel');
+  if(lbl) lbl.textContent = resumable ? 'Carry on where it stopped' : 'Compare the quotes';
   document.getElementById('cmpBtn').disabled = !takeoffData;
 }
 // Same category union the run itself builds, computed up front so the readiness note can say
@@ -2846,13 +2958,28 @@ function effectiveRequirementCount(){
 // A category with more takeoff lines than one answer can hold is walked in chunks, so the
 // honest pass count is per chunk, not per category. Quoting the category count understated a
 // job this size by a factor of five.
-function countComparePasses(){
+function countComparePasses(skipCats){
   const LINES_PER_PASS = 25;
+  const skip = new Set(skipCats||[]);
   const perCat = {};
   ((takeoffData&&takeoffData.items)||[]).forEach(it=>{ const c=catOf(it); perCat[c]=(perCat[c]||0)+1; });
   suppliers.filter(s=>s.data).forEach(s=>(s.data.items||[]).forEach(it=>{ const c=catOf(it); if(!(c in perCat)) perCat[c]=0; }));
   ((specBasis&&specBasis.items)||[]).forEach(it=>{ const c=catOf(it); if(!(c in perCat)) perCat[c]=0; });
-  return Object.values(perCat).reduce((a,n)=>a+Math.max(1, Math.ceil(n/LINES_PER_PASS)), 0);
+  return Object.keys(perCat).reduce((a,c)=>a + (skip.has(c) ? 0 : Math.max(1, Math.ceil(perCat[c]/LINES_PER_PASS))), 0);
+}
+// On a resume the only coverage work left is the requirements that never got an answer.
+function countCoveragePassesLeft(prior){
+  const per = 25;
+  const total = effectiveRequirementCount();
+  if(!prior) return Math.ceil(total/per);
+  const answered = new Set(((prior.coverage&&prior.coverage.checks)||[]).map(c=>reqKey(c.requirement)));
+  const reqs = [].concat(
+    (((bidReq&&(bidReq.triaged||bidReq.findings))||[])).map(f=>f.requirement),
+    (((specBasis&&specBasis.items)||[])).map(i=>[i.tag,i.description].filter(Boolean).join(' ')),
+    (((bidReq&&bidReq.kickoff_points)||[])).map(k=>k.label)
+  ).filter(Boolean);
+  const left = reqs.filter(r=>!answered.has(reqKey(r))).length;
+  return Math.ceil(left/per);
 }
 function stopCompare(){ if(cmpAbort) cmpAbort.abort(); }
 function setCmpRunning(on){
@@ -2864,6 +2991,10 @@ function setCmpRunning(on){
 // Fitting and its stops are Valves, so the assembly gets torn across three separate passes and
 // the group can never be matched whole against the takeoff line for that fixture. Every member
 // of a group takes the group's category.
+// A run is resumable whether it ended by failing some passes ('partial') or by never reaching
+// the end at all ('incomplete', which is what a mid-run checkpoint leaves behind if the tab is
+// closed). Both hold real finished work and neither should be thrown away.
+function isResumableRun(run){ return !!run && (run.status === 'partial' || run.status === 'incomplete'); }
 function catOf(x){
   const c = (x && (x.effective_category || x.category)) || '';
   return CATEGORIES.indexOf(c)>=0 ? c : 'Other';
@@ -2910,10 +3041,45 @@ async function runCompare(){
   cmpAbort = new AbortController();
   setCmpRunning(true);
   const prog = document.getElementById('cmpProg');
+
+  // Resume rather than start over. A partial run holds real work that was paid for, and the
+  // only reason it stopped is that some passes failed: redoing the ones that succeeded buys
+  // nothing and costs everything. The previous result is only reusable if it was measured
+  // against the same takeoff and the same set of suppliers, so that is checked first.
+  const prior = cmpData;
+  const priorRun = (prior && prior._run) || null;
+  const sameBasis = isResumableRun(priorRun)
+    && priorRun.takeoff_version === takeoffData.version
+    && (priorRun.suppliers||[]).slice().sort().join('|') === read.map(s=>s.name).sort().join('|');
+  const doneCats = sameBasis ? (priorRun.done||[]).slice() : [];
   const all = { rows:[], exceptions:[], coverage:{ checks:[], gaps:[] },
-    _run:{ status:'incomplete', categories:cats.slice(), done:[], failed:[], suppliers:read.map(s=>s.name),
+    _run:{ status:'incomplete', categories:cats.slice(), done:doneCats.slice(), failed:[], suppliers:read.map(s=>s.name),
       takeoff_version: takeoffData.version, takeoff_lines:(takeoffData.items||[]).length,
-      had_schedule: !!specBasis, had_bid_req: !!bidReq, at:new Date().toISOString() } };
+      had_schedule: !!specBasis, had_bid_req: !!bidReq, at:new Date().toISOString(),
+      resumed_from: sameBasis ? (priorRun.at||'') : '' } };
+  if(sameBasis){
+    // Carry across the finished categories and every coverage answer already obtained. The
+    // deterministic exceptions (quote terms, library pricing) are recomputed at the end
+    // regardless, so only the model-derived ones are carried.
+    (prior.rows||[]).filter(r=>doneCats.indexOf(r.category)>=0).forEach(r=>all.rows.push(r));
+    (prior.exceptions||[]).filter(x=>!x._fromDoc && !x._fromLibrary && (x.lane!=='quote' || doneCats.indexOf(x.category)>=0))
+      .forEach(x=>all.exceptions.push(x));
+    ((prior.coverage&&prior.coverage.checks)||[]).forEach(c=>all.coverage.checks.push(c));
+    ((prior.coverage&&prior.coverage.gaps)||[]).forEach(g=>all.coverage.gaps.push(g));
+  }
+
+  // Progress is written down as it happens rather than only at the end. A drop at minute
+  // thirty should cost one pass, not the whole run.
+  let sinceCheckpoint = 0;
+  const checkpoint = (force)=>{
+    sinceCheckpoint++;
+    cmpData = all;
+    if(force || sinceCheckpoint >= 3){
+      sinceCheckpoint = 0;
+      all._run.status = 'incomplete';
+      saveToCloud('p2_comparison', all);
+    }
+  };
   try{
     /* ---- lane 1: quotes against the takeoff ----
        One pass per category was too coarse. A category like Fixtures on a real job is a
@@ -2963,6 +3129,10 @@ async function runCompare(){
       const LINES_PER_PASS = 25;
       for(let i=0;i<cats.length;i++){
         const cat = cats[i];
+        if(doneCats.indexOf(cat) >= 0){
+          prog.textContent = 'Category '+(i+1)+' of '+cats.length+': '+cat+' was already done on the last run, keeping it.';
+          continue;
+        }
         const takeoffPart = (takeoffData.items||[]).filter(it=>catOf(it)===cat);
         const sched = ((specBasis&&specBasis.items)||[]).filter(it=>catOf(it)===cat);
         const sups = supplierSlice(cat);
@@ -2979,7 +3149,8 @@ async function runCompare(){
           const ok = await comparePart(cat, chunks[c], sched, sups, c === chunks.length-1, label, 0);
           allOk = allOk && ok;
         }
-        if(allOk) all._run.done.push(cat);
+        if(allOk && all._run.done.indexOf(cat)<0) all._run.done.push(cat);
+        checkpoint();
       }
     } else {
       prog.textContent = 'No quotes loaded, skipping straight to the coverage check…';
@@ -3016,15 +3187,20 @@ async function runCompare(){
       // The whole takeoff rides along with every batch: a requirement can be covered by a line
       // in any category, so slicing the takeoff by category here would invent false gaps.
       const compactTakeoff = (takeoffData.items||[]).map(it=>({ d:it.description, q:it.qty, u:it.uom, c:it.category }));
+      const answered = new Set((all.coverage.checks||[]).map(c=>reqKey(c.requirement)));
+      const todo = reqs.filter(r=>!answered.has(reqKey(r.requirement)));
+      if(answered.size && todo.length < reqs.length){
+        prog.textContent = (reqs.length-todo.length)+' of the '+reqs.length+' coverage checks were already done, carrying those over.';
+      }
       const per = 25;
-      for(let i=0;i<reqs.length;i+=per){
-        const batch = reqs.slice(i, i+per);
-        prog.textContent = 'Coverage check: requirements '+(i+1)+' to '+Math.min(i+per, reqs.length)+' of '+reqs.length+' against the takeoff…';
+      for(let i=0;i<todo.length;i+=per){
+        const batch = todo.slice(i, i+per);
+        prog.textContent = 'Coverage check: requirements '+(i+1)+' to '+Math.min(i+per, todo.length)+' of '+todo.length+' still to do…';
         try{
           const r = await fetchAndParseJSON(key,
             [{type:'text', text:'THE TAKEOFF (the estimator\'s own list, d=description q=quantity u=unit c=category):\n'+JSON.stringify(compactTakeoff)+
               '\n\nREQUIREMENTS TO CHECK FOR COVERAGE:\n'+JSON.stringify(batch)}],
-            SYSTEM_COVERAGE, cmpAbort.signal, 'cmpProg', 'the coverage check, requirements '+(i+1)+' to '+Math.min(i+per, reqs.length), MAX_TOKENS_COMPARE);
+            SYSTEM_COVERAGE, cmpAbort.signal, 'cmpProg', 'the coverage check, requirements '+(i+1)+' to '+Math.min(i+per, todo.length), MAX_TOKENS_COMPARE);
           (r.checks||[]).forEach(c=>all.coverage.checks.push(c));
           (r.gaps||[]).forEach(g=>{
             all.coverage.gaps.push(g);
@@ -3036,8 +3212,9 @@ async function runCompare(){
           console.error(e);
           all._run.failed.push({ category:'coverage batch '+(i/per+1), error:e.message, lane:'coverage' });
         }
+        checkpoint();
       }
-      all._run.coverage_checked = reqs.length;
+      all._run.coverage_checked = all.coverage.checks.length;
     }
 
     // Everything quoteFlags() found reading the documents themselves goes in too. These are
@@ -3110,12 +3287,21 @@ async function runCompare(){
     all._run.status = all._run.failed.length ? 'partial' : 'complete';
     all.summary = buildSummary(all, read);
     cmpData = all;
-    prog.textContent = 'Done. '+all.rows.length+' item rows, '+(all.coverage.checks||[]).length+' coverage checks, '+all.exceptions.length+' exception'+(all.exceptions.length===1?'':'s')+'.';
+    prog.textContent = 'Done. '+all.rows.length+' item rows, '+(all.coverage.checks||[]).length+' coverage checks, '+all.exceptions.length+' exception'+(all.exceptions.length===1?'':'s')+'.'+
+      (all._run.resumed_from ? ' Picked up from the previous run rather than starting over.' : '');
     renderCompare(); renderExceptions(); renderBuySheet(); updateCounts();
     saveToCloud('p2_comparison', cmpData);
   }catch(e){
     if(e.name === 'AbortError'){
-      prog.textContent = 'Stopped. Nothing was saved for this run.';
+      // Everything gathered up to the moment you pressed Stop is kept, and the next run picks
+      // up from it. Throwing it away would punish you for stopping.
+      all._run.status = 'partial';
+      all.summary = buildSummary(all, read);
+      cmpData = all;
+      renderCompare(); renderExceptions(); renderBuySheet(); updateCounts();
+      saveToCloud('p2_comparison', cmpData);
+      prog.textContent = 'Stopped. The '+all._run.done.length+' categor'+(all._run.done.length===1?'y':'ies')+' and '+
+        all.coverage.checks.length+' coverage checks already finished are kept. Running it again carries on from here.';
     }else{
       console.error(e);
       errEl.innerHTML = '<div class="note err"><b>The comparison could not finish.</b> '+esc(e.message)+'</div>';
@@ -3197,11 +3383,16 @@ function renderCompare(){
   const cov = sum.coverage || {};
 
   let html = takeoffStaleBanner();
-  if(run.status === 'partial'){
+  if(run.status === 'incomplete' && !(run.failed||[]).length){
+    html += '<div class="note err"><b>This run never reached the end.</b> It is what was saved as it went, from a run that was interrupted rather than one that failed. '+
+      ((run.done||[]).length)+' categor'+((run.done||[]).length===1?'y':'ies')+' and '+(((cmpData.coverage&&cmpData.coverage.checks)||[]).length)+
+      ' coverage checks are in it. Press the button on the Comparison tab and it carries on from here.</div>';
+  }
+  if(run.status === 'partial' || ((run.failed||[]).length && run.status === 'incomplete')){
     const byCat = {};
     (run.failed||[]).forEach(f=>{ (byCat[f.category] = byCat[f.category] || []).push(f); });
     html += '<div class="note err"><b>PARTIAL RESULT — do not rely on this yet.</b> '+run.failed.length+' pass'+(run.failed.length===1?'':'es')+' did not finish, so those categories are incomplete. '+
-      'Running the comparison again picks them up.'+
+      'Running the comparison again picks up only these, and keeps everything that already finished.'+
       '<ul style="margin:8px 0 0;padding-left:20px">'+
       Object.keys(byCat).map(cat=>'<li><b>'+esc(cat)+'</b>'+(byCat[cat][0].part?(' &middot; '+esc(byCat[cat][0].part)):'')+
         '<div style="font-size:12.5px;margin-top:2px">'+esc(String(byCat[cat][0].error||'').slice(0,240))+'</div></li>').join('')+
@@ -3280,9 +3471,19 @@ function renderCompare(){
         (flags.length ? '<div class="scflag">'+esc(flags.join(' · '))+'</div>' : '')+
       '</div>';
     }).join('')+'</div>'+
-    (libraryColumnActive() ? '<div class="note info"><b>Your library is the last column on every table below.</b> It is your own price for the same item, looked up in the '+
-      libIndex.reduce((a,x)=>a+x.rows,0).toLocaleString()+' rows you loaded, so each supplier price has something to be measured against rather than only the other two. '+
-      'It is not a quote from anyone and it never counts as a supplier covering a line.</div>' : '')+
+    (libraryColumnActive() ? (function(){
+      const rows = cmpData.rows||[];
+      let hit = 0, priced = 0;
+      rows.forEach(r=>{ const m = libraryOffer(r); if(m){ hit++; if(m.price) priced++; } });
+      const noPriceCol = libIndex.length && libIndex.every(ix=>(ix.roles||{}).price === undefined);
+      return '<div class="note '+(hit?'info':'err')+'"><b>Your library is the last column on every table below.</b> '+
+        'It matched <b>'+hit+' of '+rows.length+'</b> compared lines'+(hit?(', '+priced+' of them with a price'):'')+', out of the '+
+        libIndex.reduce((a,x)=>a+x.rows,0).toLocaleString()+' rows you loaded. '+
+        (hit ? 'It is not a quote from anyone and it never counts as a supplier covering a line.'
+             : 'Nothing matched at all, which is worth looking at rather than accepting: open the Library tab and check that the sheet has a description column mapped, because if it has not, there is nothing sensible to match on.')+
+        (noPriceCol && hit ? ' <b>No price column is mapped on your library sheets</b>, so the column can say what an item is but not what it costs. Set that under "What each column means" on the Library tab.' : '')+
+      '</div>';
+    })() : (libIndex.length ? '<div class="note warn"><b>Your library is loaded but is not being used here.</b> Run the comparison again and it will appear as an extra column.</div>' : ''))+
     '<div class="note warn"><b>These totals are not yet comparable to each other.</b> Each one is only the sum of what that supplier actually put on paper. A cheaper number nearly always has a reason sitting in the exceptions list, so clear those first, then compare.</div>';
   }
 
@@ -3656,7 +3857,7 @@ function renderBuySheet(){
 
   let html = takeoffStaleBanner();
   const bRun = (cmpData && cmpData._run) || {};
-  if(bRun.status === 'partial'){
+  if(isResumableRun(bRun)){
     const cats = Array.from(new Set((bRun.failed||[]).filter(f=>f.lane!=='coverage').map(f=>f.category)));
     html += '<div class="note err"><b>These numbers are for part of the job, not all of it.</b> '+
       (cats.length ? ('Nothing from '+cats.map(esc).join(', ')+' is in any figure on this tab, because '+(cats.length===1?'that category':'those categories')+' never finished comparing. ') : '')+
@@ -3884,12 +4085,12 @@ function downloadCompareExcel(btn){
     const xRun = cmpData._run || {};
     // A partial run has to announce itself on the first sheet. A spreadsheet outlives the
     // screen it came from, and by the time someone opens this the on-screen warning is gone.
-    const partialCats = xRun.status === 'partial'
+    const partialCats = isResumableRun(xRun)
       ? Array.from(new Set((xRun.failed||[]).filter(f=>f.lane!=='coverage').map(f=>f.category))) : [];
 
     // Sheet 1: the exceptions. First sheet on purpose, because it is the one that gets read.
     const ex = [];
-    if(xRun.status === 'partial'){
+    if(isResumableRun(xRun)){
       ex.push(['INCOMPLETE RUN — this workbook covers part of the job only.']);
       if(partialCats.length) ex.push(['Never compared: '+partialCats.join(', ')+'. No item in those categories appears anywhere in this workbook.']);
       ex.push(['Re-run the comparison and download again before pricing from this.']);
@@ -4413,9 +4614,20 @@ function libTokens(t){
     // is often the size, and 2 in `2" copper` was being thrown away for being one character.
     .filter(w=>(w.length>1 || /\d/.test(w)) && !LIB_STOP.has(w));
 }
-// A token carrying digits is a size or a model number, and those are what actually identify a
-// plumbing item. "2234.001" is worth far more than "water".
-function libWeight(tok){ return /\d/.test(tok) ? 3 : 1; }
+// Not all numbers are equal. "2234.001" identifies one product; "4" is on a third of the price
+// list. Weighting every digit token the same made a shared pipe size enough to call VTR 4in a
+// match for SLEEVE 4in, which is worse than finding nothing.
+function libTokKind(tok){
+  const digits = (tok.match(/\d/g)||[]).length;
+  // Counted rather than pattern-matched. "2234.001" and "4" are both numbers with a dot or
+  // without, and the only thing that reliably separates a model number from a pipe size is how
+  // many digits it carries.
+  if(digits >= 4) return 'model';                                    // 2234.001, st2029, 1655ssct
+  if(digits >= 1 && /[a-z]/.test(tok) && tok.length >= 4) return 'model'; // lf3001a
+  if(digits) return 'size';                                          // 4, 1/2, 2.5, 2in
+  return 'word';
+}
+function libWeight(tok){ const k = libTokKind(tok); return k==='model' ? 4 : 1; }
 function libRowText(rec, r){
   const roles = rec.roles || {};
   const cols = [roles.description, roles.part, roles.model, roles.manufacturer].filter(i=>i!==undefined);
@@ -4450,33 +4662,66 @@ function libBestMatch(text){
       if(!hits || hits.length > rec.rows.length*0.5) return;
       hits.forEach(i=>cand.set(i, true));
     });
+    // On a small or repetitive price list every token can appear in more than half the rows,
+    // and the selectivity guard above then rules all of them out and finds nothing at all.
+    // Falling back to the union means a short list is scanned properly rather than skipped.
+    if(!cand.size){
+      qTokens.forEach(t=>{ (idx[t]||[]).forEach(i=>cand.set(i, true)); });
+      if(cand.size > 4000){ let n = 0; const trimmed = new Map(); cand.forEach((_,i)=>{ if(n++ < 4000) trimmed.set(i,true); }); cand.clear(); trimmed.forEach((_,i)=>cand.set(i,true)); }
+    }
     if(!cand.size) return;
     cand.forEach((_, i)=>{
       const rowToks = new Set(libTokens(libRowText(rec, rec.rows[i])));
-      let hit = 0, digitHit = 0;
-      qTokens.forEach(t=>{ if(rowToks.has(t)){ hit += libWeight(t); if(/\d/.test(t)) digitHit++; } });
-      const score = hit / qWeightTotal;
-      // A match with no shared number is only believable when nearly every word lines up.
-      if(!digitHit && score < 0.7) return;
+      let hit = 0, modelHit = 0, wordHit = 0, sizeHit = 0;
+      qTokens.forEach(t=>{
+        if(!rowToks.has(t)) return;
+        hit += libWeight(t);
+        const k = libTokKind(t);
+        if(k==='model') modelHit++; else if(k==='word') wordHit++; else sizeHit++;
+      });
+      if(!hit) return;
+      // How much of the LIBRARY row's own wording was accounted for. A terse catalogue entry
+      // whose every word appears in a wordy takeoff line is a real match even though it is only
+      // a fraction of that line.
+      let rowWords = 0, rowWordsHit = 0;
+      rowToks.forEach(t=>{ if(libTokKind(t)==='word'){ rowWords++; if(qTokens.indexOf(t)>=0) rowWordsHit++; } });
+      const rowWordCov = rowWords ? rowWordsHit/rowWords : 0;
+      // Matching on a shared pipe size and nothing else is not a match. It needs a model
+      // number, or two words in common, or one word that accounts for the whole library entry.
+      const substantial = modelHit >= 1 || wordHit >= 2 || (wordHit >= 1 && rowWordCov >= 0.9);
+      if(!substantial) return;
+      // Scored both ways round. A takeoff line is often far wordier than the catalogue entry
+      // for the same thing: "SLEEVE PENETRATION THROUGH FOUNDATION FOR 4in SAN PIPE" against a
+      // library row reading "SLEEVE 4 IN". Measured only against the takeoff wording that is a
+      // weak match; measured against the library row it is a complete one. Taking the better of
+      // the two is what stops most of a real price list looking like a miss.
+      let rowWeightTotal = 0;
+      rowToks.forEach(t=>{ rowWeightTotal += libWeight(t); });
+      const score = Math.max(hit / qWeightTotal, rowWeightTotal ? (hit / rowWeightTotal) : 0);
       if(score < 0.45) return;
       if(!best || score > best.score){
         if(best && Math.abs(best.score - score) > 0.05) runnersUp = 0;
         best = { sheetId: ix.id, sheet: ix.name, rowIndex: i, row: rec.rows[i], cols: rec.cols,
-                 roles: rec.roles||{}, score, digitHit };
+                 roles: rec.roles||{}, score, modelHit, wordHit, sizeHit, rowWordCov };
       } else if(best && Math.abs(best.score - score) <= 0.05) runnersUp++;
     });
   });
   if(!best) return null;
-  best.confidence = best.score >= 0.85 ? 'high' : best.score >= 0.65 ? 'medium' : 'low';
+  best.confidence = (best.modelHit && best.score >= 0.7) ? 'high'
+    : (best.modelHit || (best.wordHit >= 2 && best.rowWordCov >= 0.8) || best.score >= 0.8) ? 'medium'
+    : 'low';
   best.alternatives = runnersUp;
   const roles = best.roles;
   best.price = roles.price !== undefined ? num(best.row[roles.price]) : 0;
   best.uom = roles.uom !== undefined ? (best.row[roles.uom]||'') : '';
   best.part = roles.part !== undefined ? (best.row[roles.part]||'') : '';
   best.description = roles.description !== undefined ? (best.row[roles.description]||'') : best.row.join(' ').slice(0,80);
-  best.why = best.digitHit
-    ? ('matched on '+best.digitHit+' number'+(best.digitHit===1?'':'s')+' in the description, '+Math.round(best.score*100)+'% of the wording')
-    : ('matched on wording alone, '+Math.round(best.score*100)+'% of it, with no part or size number in common');
+  const bits = [];
+  if(best.modelHit) bits.push(best.modelHit+' part or model number'+(best.modelHit===1?'':'s'));
+  if(best.wordHit) bits.push(best.wordHit+' word'+(best.wordHit===1?'':'s'));
+  if(best.sizeHit) bits.push('the size');
+  best.why = 'matched on '+(bits.join(' and ') || 'wording')+', covering '+Math.round(best.score*100)+'% of it'+
+    (!best.modelHit ? ', with no part or model number in common' : '');
   return best;
 }
 // One cached answer per takeoff line for the life of a render.
