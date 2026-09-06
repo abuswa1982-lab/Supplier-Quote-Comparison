@@ -456,7 +456,7 @@
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B8</b> &middot; 2026-09-06</span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B9</b> &middot; 2026-09-06</span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -2949,7 +2949,10 @@ function renderReadiness(){
   }
   // When it will NOT resume, say why rather than leaving a full-price run looking like the
   // only option. The legacy case gets a button, because that work is real and worth keeping.
-  if(!resumable && cmpData && (cmpData.rows||[]).length){
+  // The 'nothing loaded' case is the one that actually bit: the gate used to require rows to
+  // exist before it would explain anything, so a job whose comparison never came down from the
+  // cloud showed no note at all and looked identical to a job that had never been run.
+  if(!resumable && (projectName() || (cmpData && (cmpData.rows||[]).length))){
     const why = resumeBlockReason(pr, read);
     if(why && why.code !== 'complete'){
       html += '<div class="note warn"><b>This will not carry on from the stored run — it will compare everything again.</b>'+
