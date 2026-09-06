@@ -456,7 +456,7 @@
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B7</b> &middot; 2026-09-06</span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B8</b> &middot; 2026-09-06</span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -2947,6 +2947,21 @@ function renderReadiness(){
         ' and '+covLeft+' coverage pass'+(covLeft===1?'':'es')+
         ((pr.failed||[]).some(f=>f.category==='gap check') ? ', plus the gap check' : '')+'.</div></div>';
   }
+  // When it will NOT resume, say why rather than leaving a full-price run looking like the
+  // only option. The legacy case gets a button, because that work is real and worth keeping.
+  if(!resumable && cmpData && (cmpData.rows||[]).length){
+    const why = resumeBlockReason(pr, read);
+    if(why && why.code !== 'complete'){
+      html += '<div class="note warn"><b>This will not carry on from the stored run — it will compare everything again.</b>'+
+        '<div style="margin-top:6px">'+why.text+'</div>'+
+        (why.code === 'legacy'
+          ? '<div style="margin-top:8px">If the takeoff and the quotes loaded right now are the same ones that run was built on, the finished categories in it can be kept and only the unfinished ones re-run.'+
+            '<div style="margin-top:8px"><button class="btn2" type="button" onclick="adoptLegacyRun()">Keep what finished and carry on</button></div>'+
+            '<div class="hint" style="margin-top:6px">If the takeoff has changed since, do not press this. Just run it — a clean run is the right answer then.</div></div>'
+          : '')+
+        '</div>';
+    }
+  }
   el.innerHTML = html;
   const lbl = document.getElementById('cmpBtnLabel');
   if(lbl) lbl.textContent = resumable ? 'Carry on where it stopped' : 'Compare the quotes';
@@ -3001,6 +3016,50 @@ function setCmpRunning(on){
 // the end at all ('incomplete', which is what a mid-run checkpoint leaves behind if the tab is
 // closed). Both hold real finished work and neither should be thrown away.
 function isResumableRun(run){ return !!run && (run.status === 'partial' || run.status === 'incomplete'); }
+// Refusing to resume is a decision worth explaining. There are four different reasons this can
+// happen and they look identical from the outside: the button just quietly says "Compare the
+// quotes" and the next run costs full price. Say which one it is, in plain words.
+// Returns null when the run really can resume.
+function resumeBlockReason(pr, read){
+  if(!cmpData || !(cmpData.rows||[]).length) return { code:'none',
+    text:'No comparison result is loaded for this job, so there is nothing to carry on from. If one is stored in the cloud, press Load Project first.' };
+  if(!pr) return { code:'legacy',
+    text:'There is a stored comparison with '+((cmpData.rows||[]).length)+' rows in it, but it carries no record of which categories finished. It was made by an older build of this tool, before the resume feature existed.' };
+  if(pr.status === 'complete') return { code:'complete',
+    text:'The stored run finished. There is nothing left to carry on with. Running again re-does the whole thing from scratch.' };
+  if(!isResumableRun(pr)) return { code:'odd',
+    text:'The stored run is marked "'+esc(String(pr.status||'unknown'))+'", which this build does not recognise as something to carry on from.' };
+  if(pr.takeoff_version === undefined || pr.takeoff_version === null) return { code:'legacy',
+    text:'The stored run has '+((pr.done||[]).length)+' finished categor'+((pr.done||[]).length===1?'y':'ies')+' and '+((cmpData.rows||[]).length)+
+      ' rows in it, but it does not record which takeoff version it was built on. It was made by an older build, before the resume feature existed, so this build cannot confirm on its own that the takeoff is still the same one.' };
+  if(pr.takeoff_version !== (takeoffData&&takeoffData.version)) return { code:'version',
+    text:'The stored run was built on takeoff v'+pr.takeoff_version+' and the takeoff loaded now is v'+(takeoffData&&takeoffData.version)+
+      '. Carrying on would mix rows from an old takeoff into a new one, so this run starts clean on purpose.' };
+  const was = (pr.suppliers||[]).slice().sort(), now = read.map(s=>s.name).sort();
+  if(was.join('|') !== now.join('|')) return { code:'suppliers',
+    text:'The stored run covered '+(was.length?was.map(esc).join(', '):'no suppliers')+' and the quotes loaded now are '+(now.length?now.map(esc).join(', '):'none')+
+      '. A different set of quotes means every line has to be compared again, so this run starts clean on purpose.' };
+  return null;
+}
+// Adopting a run made by an older build. The rows in it are real work and throwing them away
+// costs real money, but only Ahmed can confirm the takeoff and the quotes are still the same
+// ones it was built on, so this is his call and never automatic.
+function adoptLegacyRun(){
+  if(!cmpData || !(cmpData.rows||[]).length) return;
+  const read = suppliers.filter(s=>s.data);
+  const cats = [];
+  (cmpData.rows||[]).forEach(r=>{ const c = catOf(r); if(cats.indexOf(c)<0) cats.push(c); });
+  const failedCats = new Set(((cmpData._run&&cmpData._run.failed)||[]).map(f=>f.category));
+  // A category that has rows AND is not on the failed list is one that genuinely finished.
+  const done = cats.filter(c=>!failedCats.has(c));
+  cmpData._run = Object.assign({ failed:[], at:new Date().toISOString() }, cmpData._run||{}, {
+    status:'partial', done:done, categories:cats,
+    takeoff_version: takeoffData ? takeoffData.version : null,
+    suppliers: read.map(s=>s.name), adopted:true
+  });
+  saveToCloud('p2_comparison', cmpData);
+  renderReadiness(); renderCompare();
+}
 function catOf(x){
   const c = (x && (x.effective_category || x.category)) || '';
   return CATEGORIES.indexOf(c)>=0 ? c : 'Other';
