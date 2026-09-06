@@ -436,6 +436,21 @@
         </div>
       </div>
       <div class="card">
+        <div class="collapsible-head" onclick="toggleCollapse(this)">
+          <i class="chev">&#9662;</i>
+          <h2>Earlier versions of the comparison</h2>
+          <span class="collapsible-summary">get back a result a later run replaced</span>
+        </div>
+        <div class="collapsible-body" style="display:none">
+          <p class="hint" style="margin:0 0 10px">Every save writes a new row rather than painting over the last one, so the comparison you had before a re-run is still in the database underneath the current one. This lists them all, newest first, and puts any of them back. Nothing is re-read and nothing costs anything.</p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button class="btn2 primary" onclick="listComparisonVersions(this)" type="button">Show earlier versions</button>
+            <span class="hint" id="versMsg" style="margin:0"></span>
+          </div>
+          <div id="versOut"></div>
+        </div>
+      </div>
+      <div class="card">
         <h2>Recover a Failed Save</h2>
         <p class="hint" style="margin:0 0 10px">If the red banner shows up and "Retry Save" doesn't get through, download the backup file it offers. Bring that file here, on any computer, any network, even weeks later, and push it into the cloud. Nothing gets re-read and nothing costs anything: this only moves data that has already been extracted.</p>
         <input type="file" id="backupFile" accept="application/json">
@@ -456,7 +471,7 @@
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B11</b> &middot; 2026-09-06</span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B13</b> &middot; 2026-09-06</span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -678,6 +693,7 @@ let bidReq = null;           // pulled from the Bid Requirements Reader: {findin
 let takeoffData = null;      // THE REFERENCE: {version, at, sources, items, hash, history, last_diff}
 let cmpData = null;          // {rows, exceptions, coverage, summary, _run}
 let specAbort = null, toAbort = null, cmpAbort = null, askAbort = null;
+let cmpSaveHeld = false;
 let specMode = 'file', toMode = 'file';
 let specFiles = [], toFiles = [];
 let excFilter = 'all';
@@ -1119,6 +1135,64 @@ function describeStoredComparison(row){
   const bad = !rows || !run || run.takeoff_version===undefined || run.takeoff_version===null;
   return '<div class="note '+(bad?'warn':'ok')+'" style="margin-top:12px"><b>What is actually inside the stored comparison:</b>'+
     '<ul style="margin:8px 0 0;padding-left:20px">'+bits.map(b=>'<li>'+b+'</li>').join('')+'</ul></div>';
+}
+// Every save appends a row, so a comparison replaced by a later run is still down there. This
+// finds all of them and puts one back. Written because a re-run that was stopped part way
+// overwrote a finished 276-line comparison with a handful of rows, and "it is gone" was not an
+// acceptable answer when it plainly was not gone.
+let _cmpVersions = [];
+async function listComparisonVersions(btn){
+  const msg = document.getElementById('versMsg'), out = document.getElementById('versOut');
+  msg.style.color = ''; out.innerHTML = '';
+  const o = btn.textContent; btn.disabled = true; btn.textContent = 'Looking…';
+  try{
+    const { rows } = await fetchProjectRows();
+    _cmpVersions = rows.filter(r=>r.phase === 'p2_comparison');
+    if(!_cmpVersions.length){
+      out.innerHTML = '<div class="note warn" style="margin-top:12px"><b>No comparison has ever been saved under "'+esc(projectName())+'".</b></div>';
+      msg.textContent = 'Reached the Worker.'; return;
+    }
+    const info = _cmpVersions.map((r,i)=>{
+      let n = 0, checks = 0, status = 'unreadable', cats = 0, ok = false;
+      try{
+        const d = JSON.parse(r.data);
+        n = (d.rows||[]).length; checks = ((d.coverage&&d.coverage.checks)||[]).length;
+        status = (d._run&&d._run.status) || 'not set';
+        const seen = {}; (d.rows||[]).forEach(x=>{ seen[catOf(x)] = true; }); cats = Object.keys(seen).length;
+        ok = true;
+      }catch(e){ /* left as unreadable */ }
+      return { i, when: r.created_at || r.updated_at || '', bytes: String(r.data||'').length, n, checks, status, cats, ok };
+    });
+    const best = info.reduce((a,b)=>b.n > a.n ? b : a, info[0]);
+    const kb = v => v > 1048576 ? ((v/1048576).toFixed(1)+' MB') : (Math.max(1,Math.round(v/1024))+' KB');
+    out.innerHTML =
+      '<div class="note '+(best.n > (info[0].n) ? 'warn' : 'ok')+'" style="margin-top:12px"><b>'+info.length+' version'+(info.length===1?'':'s')+' of the comparison stored for this job.</b> '+
+        (best.n > info[0].n
+          ? 'The one loaded now is <b>not</b> the biggest. Version '+(best.i+1)+' holds '+best.n+' item rows against the current '+info[0].n+'. That is the one a stopped re-run replaced.'
+          : 'The newest one is also the fullest, so nothing has been lost.')+'</div>'+
+      '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:60px">#</th><th style="width:180px">Saved</th>'+
+      '<th style="width:100px">Item rows</th><th style="width:110px">Coverage</th><th style="width:110px">Status</th><th style="width:80px">Size</th><th style="width:130px"></th></tr></thead><tbody>'+
+      info.map(x=>'<tr'+(x.i===best.i && best.n>info[0].n ? ' class="hasissue"' : '')+'>'+
+        '<td class="qtybox">'+(x.i+1)+(x.i===0?' <span class="itemsub">(loaded)</span>':'')+'</td>'+
+        '<td>'+esc(String(x.when).replace('T',' ').slice(0,19) || 'no date recorded')+'</td>'+
+        '<td class="qtybox">'+(x.ok ? x.n+' <span class="itemsub">'+x.cats+' cat</span>' : '&mdash;')+'</td>'+
+        '<td class="qtybox">'+(x.ok ? x.checks : '&mdash;')+'</td>'+
+        '<td>'+esc(x.status)+'</td><td class="qtybox">'+kb(x.bytes)+'</td>'+
+        '<td>'+(x.ok && x.i>0 ? '<button class="btn2" type="button" onclick="restoreComparisonVersion('+x.i+')">Put this one back</button>' : (x.i===0?'<span class="itemsub">in use</span>':'<span class="mm miss">unreadable</span>'))+'</td>'+
+      '</tr>').join('')+'</tbody></table></div>';
+    msg.textContent = 'Read straight from the Worker just now.';
+  }catch(e){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
+  finally{ btn.disabled = false; btn.textContent = o; }
+}
+function restoreComparisonVersion(i){
+  const r = _cmpVersions[i];
+  if(!r) return;
+  let d; try{ d = JSON.parse(r.data); }catch(e){ document.getElementById('versMsg').textContent = 'That version will not parse: '+e.message; return; }
+  cmpData = d;
+  saveToCloud('p2_comparison', cmpData);   // re-save so it becomes the newest again
+  renderCompare(); renderExceptions(); renderBuySheet(); renderReadiness(); updateCounts();
+  document.getElementById('versMsg').textContent = 'Version '+(i+1)+' is back: '+((d.rows||[]).length)+' item rows. It has been written up as the current one.';
+  setPageTab('compare');
 }
 async function inspectStorage(btn){
   const msg = document.getElementById('inspectMsg'), out = document.getElementById('inspectOut');
@@ -3018,6 +3092,23 @@ function renderReadiness(){
   // The 'nothing loaded' case is the one that actually bit: the gate used to require rows to
   // exist before it would explain anything, so a job whose comparison never came down from the
   // cloud showed no note at all and looked identical to a job that had never been run.
+  // The count itself, on screen. Two builds in a row were argued about because nobody could see
+  // how much of the job actually had rows against it. This is that number, per category.
+  if(cmpData && (cmpData.rows||[]).length && takeoffData){
+    const cov = categoryCoverage();
+    const shortN = cov.filter(c=>c.short).length;
+    html += '<div class="note '+(shortN?'warn':'ok')+'"><b>What the stored comparison actually covers</b>'+
+      '<div class="tablewrap" style="margin-top:8px"><table class="matrix"><thead><tr>'+
+      '<th>Category</th><th style="width:110px">Takeoff lines</th><th style="width:110px">Compared</th><th style="width:150px"></th>'+
+      '</tr></thead><tbody>'+
+      cov.map(c=>'<tr'+(c.short?' class="hasissue"':'')+'><td>'+esc(c.category)+'</td>'+
+        '<td class="qtybox">'+c.lines+'</td><td class="qtybox">'+c.rows+'</td>'+
+        '<td>'+(c.short ? (c.rows ? '<span class="mm miss">'+(c.lines-c.rows)+' still to do</span>' : '<span class="mm miss">none of it</span>') : '<span class="mm exact">done</span>')+'</td></tr>').join('')+
+      '</tbody></table></div>'+
+      '<div style="margin-top:6px">'+(shortN
+        ? ('<b>'+shortN+' categor'+(shortN===1?'y is':'ies are')+' short.</b> Those are what a resume runs, and only those.')
+        : 'Every takeoff line has a comparison row against it.')+'</div></div>';
+  }
   if(!resumable && (projectName() || (cmpData && (cmpData.rows||[]).length))){
     const why = resumeBlockReason(pr, read);
     if(why){
@@ -3086,6 +3177,20 @@ function setCmpRunning(on){
 // closed). Both hold real finished work and neither should be thrown away.
 // The categories this job actually has work in. Derived from the takeoff and the quotes, which
 // is the same union the run itself walks.
+// The run record has been wrong twice now: it said "complete" on a run with five failed
+// passes, and it listed those same five categories as done. So stop asking it. Every takeoff
+// line is supposed to produce one comparison row, so counting rows against takeoff lines per
+// category says what was really compared, using nothing but the data itself.
+function categoryCoverage(){
+  const lines = {}, rows = {};
+  ((takeoffData&&takeoffData.items)||[]).forEach(it=>{ const c = catOf(it); lines[c] = (lines[c]||0)+1; });
+  ((cmpData&&cmpData.rows)||[]).forEach(r=>{ const c = catOf(r); rows[c] = (rows[c]||0)+1; });
+  return Object.keys(lines).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b))
+    .map(c=>({ category:c, lines:lines[c], rows:rows[c]||0, short:(rows[c]||0) < lines[c] }));
+}
+// The categories that genuinely have every one of their takeoff lines compared.
+function coveredCategories(){ return categoryCoverage().filter(c=>!c.short).map(c=>c.category); }
+function shortCategories(){ return categoryCoverage().filter(c=>c.short).map(c=>c.category); }
 function neededCategories(){
   const per = {};
   ((takeoffData&&takeoffData.items)||[]).forEach(it=>{ per[catOf(it)] = true; });
@@ -3098,12 +3203,16 @@ function neededCategories(){
 // trusting the label threw away real work and quietly charged for a full re-run. Believe the
 // data instead: if a category this job needs was never recorded as done, the run is not done.
 function isResumableRun(run){
+  if(!cmpData || !(cmpData.rows||[]).length) return false;
+  // No run record at all is a separate case: there is nothing recording which takeoff and which
+  // quotes the rows were built against, so resuming is offered as a decision rather than taken
+  // automatically. That is what the "Keep what finished" button is for.
   if(!run) return false;
+  // Otherwise: rows first, and rows last. If a takeoff line has no comparison row, it was not
+  // compared, and no field in the run record gets to say otherwise.
+  if(shortCategories().length) return true;
   if((run.failed||[]).length) return true;
-  if(run.status === 'partial' || run.status === 'incomplete') return true;
-  const done = new Set(run.done||[]);
-  const need = neededCategories();
-  return need.length > 0 && need.some(c=>!done.has(c));
+  return run.status === 'partial' || run.status === 'incomplete';
 }
 // Refusing to resume is a decision worth explaining. There are four different reasons this can
 // happen and they look identical from the outside: the button just quietly says "Compare the
@@ -3115,7 +3224,7 @@ function resumeBlockReason(pr, read){
   if(!pr) return { code:'legacy',
     text:'There is a stored comparison with '+((cmpData.rows||[]).length)+' rows in it, but it carries no record of which categories finished. It was made by an older build of this tool, before the resume feature existed.' };
   if(pr.status === 'complete') return { code:'complete',
-    text:'The stored run is marked finished and every category this job needs is recorded as done. Running again re-does the whole thing from scratch.' };
+    text:'The stored run is marked finished, and counting the rows agrees: every takeoff line in every category has a comparison row against it. Running again re-does the whole thing from scratch.' };
   if(!isResumableRun(pr)) return { code:'odd',
     text:'The stored run is marked "'+esc(String(pr.status||'unknown'))+'", which this build does not recognise as something to carry on from.' };
   if(pr.takeoff_version === undefined || pr.takeoff_version === null) return { code:'legacy',
@@ -3136,11 +3245,10 @@ function resumeBlockReason(pr, read){
 function adoptLegacyRun(){
   if(!cmpData || !(cmpData.rows||[]).length) return;
   const read = suppliers.filter(s=>s.data);
-  const cats = [];
-  (cmpData.rows||[]).forEach(r=>{ const c = catOf(r); if(cats.indexOf(c)<0) cats.push(c); });
-  const failedCats = new Set(((cmpData._run&&cmpData._run.failed)||[]).map(f=>f.category));
-  // A category that has rows AND is not on the failed list is one that genuinely finished.
-  const done = cats.filter(c=>!failedCats.has(c));
+  // Finished means every takeoff line in that category has a row against it - counted, not
+  // taken on trust from a record that has already been wrong.
+  const done = coveredCategories();
+  const cats = neededCategories();
   cmpData._run = Object.assign({ failed:[], at:new Date().toISOString() }, cmpData._run||{}, {
     status:'partial', done:done, categories:cats,
     takeoff_version: takeoffData ? takeoffData.version : null,
@@ -3205,7 +3313,9 @@ async function runCompare(){
   const sameBasis = isResumableRun(priorRun)
     && priorRun.takeoff_version === takeoffData.version
     && (priorRun.suppliers||[]).slice().sort().join('|') === read.map(s=>s.name).sort().join('|');
-  const doneCats = sameBasis ? (priorRun.done||[]).slice() : [];
+  // Skip only what is actually, verifiably there. Taking this from priorRun.done is what
+  // let a category with no rows in it be treated as finished.
+  const doneCats = sameBasis ? coveredCategories() : [];
   const all = { rows:[], exceptions:[], coverage:{ checks:[], gaps:[] },
     _run:{ status:'incomplete', categories:cats.slice(), done:doneCats.slice(), failed:[], suppliers:read.map(s=>s.name),
       takeoff_version: takeoffData.version, takeoff_lines:(takeoffData.items||[]).length,
@@ -3225,12 +3335,23 @@ async function runCompare(){
   // Progress is written down as it happens rather than only at the end. A drop at minute
   // thirty should cost one pass, not the whole run.
   let sinceCheckpoint = 0;
+  // How much was already banked before this run started. A checkpoint exists to protect work in
+  // progress; it must never be the thing that destroys work already finished. Pressing Compare
+  // on a finished job and stopping part way used to overwrite a complete result with a handful
+  // of fresh rows - exactly the wrong way round.
+  const priorRowCount = (prior && (prior.rows||[]).length) || 0;
+  cmpSaveHeld = false;
   const checkpoint = (force)=>{
     sinceCheckpoint++;
     cmpData = all;
     if(force || sinceCheckpoint >= 3){
       sinceCheckpoint = 0;
       all._run.status = 'incomplete';
+      if(all.rows.length < priorRowCount){
+        cmpSaveHeld = true;   // still behind what is banked: keep it in memory, leave the stored copy alone
+        return;
+      }
+      cmpSaveHeld = false;
       saveToCloud('p2_comparison', all);
     }
   };
@@ -3451,6 +3572,18 @@ async function runCompare(){
       // up from it. Throwing it away would punish you for stopping.
       all._run.status = 'partial';
       all.summary = buildSummary(all, read);
+      // ...but a part-finished run must never be written over a fuller one that is already
+      // banked. This is the exact line that destroyed a finished 276-line comparison when a
+      // re-run was started on a completed job and stopped a couple of passes in.
+      if(all.rows.length < priorRowCount){
+        cmpData = prior;   // put the fuller stored result back on screen
+        renderCompare(); renderExceptions(); renderBuySheet(); updateCounts();
+        prog.textContent = '';
+        errEl.innerHTML = '<div class="note warn"><b>Stopped, and nothing was overwritten.</b> This run had reached '+all.rows.length+
+          ' item row'+(all.rows.length===1?'':'s')+', which is fewer than the '+priorRowCount+' already saved for this job, so the saved result has been left exactly as it was and is what you are looking at now. '+
+          'Nothing has been lost and nothing has been spent twice.</div>';
+        return;
+      }
       cmpData = all;
       renderCompare(); renderExceptions(); renderBuySheet(); updateCounts();
       saveToCloud('p2_comparison', cmpData);
