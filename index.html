@@ -456,7 +456,7 @@
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B9</b> &middot; 2026-09-06</span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B10</b> &middot; 2026-09-06</span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -768,6 +768,20 @@ function setProjectBar(msg, isWarn){
   el.textContent = msg;
   el.classList.toggle('warn', !!isWarn);
 }
+// A load that half worked must say so on screen. Folding it into the status line is how a
+// missing comparison ends up looking like a comparison that was never run.
+function showLoadWarnings(list){
+  const el = document.getElementById('cloudStatus');
+  if(!el || !el.parentNode) return;
+  let box = document.getElementById('loadWarnBox');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'loadWarnBox';
+    el.parentNode.appendChild(box);
+  }
+  box.innerHTML = '<div class="note err" style="margin-top:10px"><b>The project loaded, but not all of it.</b>'+
+    '<ul style="margin:8px 0 0;padding-left:20px">'+list.map(w=>'<li>'+esc(w)+'</li>').join('')+'</ul></div>';
+}
 function getKey(){ return document.getElementById('key').value.trim(); }
 function workerUrl(){ return document.getElementById('cloudWorkerUrl').value.trim().replace(/\/+$/,''); }
 function projectName(){ return document.getElementById('cloudProject').value.trim(); }
@@ -955,6 +969,7 @@ async function loadCloudProject(btn){
   try{
     const { latestByPhase } = await fetchProjectRows();
     const loaded = [];
+    const loadWarnings = [];
     // Phase 2's own saved work
     suppliers.forEach(s=>{ s.data = null; });
     const supKeys = Object.keys(latestByPhase).filter(k=>k.indexOf('p2_quote:')===0);
@@ -1006,9 +1021,24 @@ async function loadCloudProject(btn){
     } else if(stored){
       bidReq = stored; renderReqOut(); loaded.push('bid requirements');
     }
+    // The comparison is the biggest and most expensive row on the job, so it gets its own
+    // error handling. Left inside the outer catch, a bad parse or a render that throws would
+    // abandon the rest of the load silently and look exactly like "there was nothing stored".
     if(latestByPhase.p2_comparison){
-      cmpData = JSON.parse(latestByPhase.p2_comparison.data);
-      renderCompare(); renderExceptions(); loaded.push('comparison');
+      let parsed = null;
+      try{ parsed = JSON.parse(latestByPhase.p2_comparison.data); }
+      catch(e){
+        const nch = String(latestByPhase.p2_comparison.data||'').length;
+        loadWarnings.push('The comparison result is stored ('+(nch >= 1024 ? (Math.round(nch/1024)+' KB') : (nch+' characters'))+
+          ') but it would not parse, so it has not been loaded: '+e.message+
+          '. Everything else on this job loaded normally. Press "Show me what is saved" in Setup for the detail.');
+      }
+      if(parsed){
+        cmpData = parsed;
+        try{ renderCompare(); renderExceptions(); }
+        catch(e){ loadWarnings.push('The comparison loaded but drawing it threw an error: '+e.message+'. The data is in memory and is not lost.'); }
+        loaded.push('comparison ('+((cmpData.rows||[]).length)+' rows)');
+      }
     }
     const msgEl = document.getElementById('pullMsg');
     if(msgEl) msgEl.textContent = bidReq
@@ -1024,6 +1054,9 @@ async function loadCloudProject(btn){
     else statusMsg = 'Nothing saved under "'+projectName()+'" from either tool. If this job has been through the Bid Requirements Reader, check the project name matches exactly what was typed over there.';
     cloudStatus(statusMsg);
     setProjectBar(statusMsg, !loaded.length);
+    // Anything that went wrong on the way in gets said out loud rather than folded into a
+    // cheerful "Loaded:" line that hides it.
+    if(loadWarnings.length) showLoadWarnings(loadWarnings);
   }catch(e){
     cloudStatus(e.message, true);
     setProjectBar(e.message, true);
@@ -1053,6 +1086,39 @@ const PHASE_LABELS = [
 function describePhase(phase){
   for(const [rx, tool, what] of PHASE_LABELS) if(rx.test(phase)) return { tool, what };
   return { tool:'unknown', what:'' };
+}
+// Saying "the comparison is in there" is not enough when the tool then refuses to use it.
+// This opens the stored row and reports what is actually inside it, so a refusal to resume can
+// be traced to a fact rather than guessed at. Nothing is sent anywhere and nothing costs money.
+function describeStoredComparison(row){
+  let d;
+  try{ d = JSON.parse(row.data); }
+  catch(e){
+    return '<div class="note err" style="margin-top:12px"><b>The comparison row is stored but it will not parse.</b> '+
+      String(row.data||'').length.toLocaleString()+' characters came down and JSON.parse rejected them: '+esc(e.message)+
+      '. That is why loading the project brings back everything except the comparison. The row is damaged, most likely written by a save that was cut off part way.</div>';
+  }
+  const rows = (d.rows||[]).length;
+  const run = d._run || null;
+  const checks = ((d.coverage&&d.coverage.checks)||[]).length;
+  const cats = []; (d.rows||[]).forEach(r=>{ const c = catOf(r); if(cats.indexOf(c)<0) cats.push(c); });
+  const bits = [];
+  bits.push('<b>'+rows.toLocaleString()+'</b> item row'+(rows===1?'':'s')+' across '+cats.length+' categor'+(cats.length===1?'y':'ies')+
+    (cats.length?(' ('+cats.map(esc).join(', ')+')'):''));
+  bits.push('<b>'+checks.toLocaleString()+'</b> coverage check'+(checks===1?'':'s'));
+  if(!run){
+    bits.push('<b>No run record.</b> Nothing in it says which categories finished, so this build cannot resume it on its own.');
+  } else {
+    bits.push('Run status: <b>'+esc(String(run.status||'not set'))+'</b>');
+    bits.push('Categories recorded as finished: '+((run.done||[]).length ? '<b>'+(run.done||[]).map(esc).join(', ')+'</b>' : '<b>none recorded</b>'));
+    if((run.failed||[]).length) bits.push('Passes recorded as failed: <b>'+run.failed.map(f=>esc(f.category)).join(', ')+'</b>');
+    bits.push('Built on takeoff version: <b>'+(run.takeoff_version===undefined||run.takeoff_version===null ? 'not recorded (older build)' : run.takeoff_version)+'</b>'+
+      (takeoffData ? (' &mdash; the takeoff loaded now is v'+takeoffData.version) : ' &mdash; no takeoff loaded right now'));
+    bits.push('Suppliers it covered: <b>'+((run.suppliers||[]).length ? (run.suppliers||[]).map(esc).join(', ') : 'not recorded (older build)')+'</b>');
+  }
+  const bad = !rows || !run || run.takeoff_version===undefined || run.takeoff_version===null;
+  return '<div class="note '+(bad?'warn':'ok')+'" style="margin-top:12px"><b>What is actually inside the stored comparison:</b>'+
+    '<ul style="margin:8px 0 0;padding-left:20px">'+bits.map(b=>'<li>'+b+'</li>').join('')+'</ul></div>';
 }
 async function inspectStorage(btn){
   const msg = document.getElementById('inspectMsg'), out = document.getElementById('inspectOut');
@@ -1084,7 +1150,7 @@ async function inspectStorage(btn){
         '<td class="qtybox">'+kb(x.bytes)+'</td></tr>').join('')+
       '</tbody></table></div>'+
       (latestByPhase.p2_comparison
-        ? '<div class="note ok" style="margin-top:12px"><b>The comparison result is in there.</b> Loading this project on any machine brings it back.</div>'
+        ? describeStoredComparison(latestByPhase.p2_comparison)
         : '<div class="note warn" style="margin-top:12px"><b>There is no comparison result stored for this job yet.</b> Either it has not been run, or the last save did not get through. If the tab that ran it is still open, the red banner\'s Retry Save will push it up now.</div>');
     msg.textContent = 'Read straight from the Worker just now.';
   }catch(e){
