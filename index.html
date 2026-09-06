@@ -456,7 +456,7 @@
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B10</b> &middot; 2026-09-06</span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B11</b> &middot; 2026-09-06</span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -3020,7 +3020,7 @@ function renderReadiness(){
   // cloud showed no note at all and looked identical to a job that had never been run.
   if(!resumable && (projectName() || (cmpData && (cmpData.rows||[]).length))){
     const why = resumeBlockReason(pr, read);
-    if(why && why.code !== 'complete'){
+    if(why){
       html += '<div class="note warn"><b>This will not carry on from the stored run — it will compare everything again.</b>'+
         '<div style="margin-top:6px">'+why.text+'</div>'+
         (why.code === 'legacy'
@@ -3084,7 +3084,27 @@ function setCmpRunning(on){
 // A run is resumable whether it ended by failing some passes ('partial') or by never reaching
 // the end at all ('incomplete', which is what a mid-run checkpoint leaves behind if the tab is
 // closed). Both hold real finished work and neither should be thrown away.
-function isResumableRun(run){ return !!run && (run.status === 'partial' || run.status === 'incomplete'); }
+// The categories this job actually has work in. Derived from the takeoff and the quotes, which
+// is the same union the run itself walks.
+function neededCategories(){
+  const per = {};
+  ((takeoffData&&takeoffData.items)||[]).forEach(it=>{ per[catOf(it)] = true; });
+  suppliers.filter(s=>s.data).forEach(s=>(s.data.items||[]).forEach(it=>{ per[catOf(it)] = true; }));
+  ((specBasis&&specBasis.items)||[]).forEach(it=>{ per[catOf(it)] = true; });
+  return Object.keys(per);
+}
+// Whether a run finished is a question about the work, not about the label on the row.
+// Earlier builds of this tool wrote status = 'complete' on runs that had passes fail, so
+// trusting the label threw away real work and quietly charged for a full re-run. Believe the
+// data instead: if a category this job needs was never recorded as done, the run is not done.
+function isResumableRun(run){
+  if(!run) return false;
+  if((run.failed||[]).length) return true;
+  if(run.status === 'partial' || run.status === 'incomplete') return true;
+  const done = new Set(run.done||[]);
+  const need = neededCategories();
+  return need.length > 0 && need.some(c=>!done.has(c));
+}
 // Refusing to resume is a decision worth explaining. There are four different reasons this can
 // happen and they look identical from the outside: the button just quietly says "Compare the
 // quotes" and the next run costs full price. Say which one it is, in plain words.
@@ -3095,7 +3115,7 @@ function resumeBlockReason(pr, read){
   if(!pr) return { code:'legacy',
     text:'There is a stored comparison with '+((cmpData.rows||[]).length)+' rows in it, but it carries no record of which categories finished. It was made by an older build of this tool, before the resume feature existed.' };
   if(pr.status === 'complete') return { code:'complete',
-    text:'The stored run finished. There is nothing left to carry on with. Running again re-does the whole thing from scratch.' };
+    text:'The stored run is marked finished and every category this job needs is recorded as done. Running again re-does the whole thing from scratch.' };
   if(!isResumableRun(pr)) return { code:'odd',
     text:'The stored run is marked "'+esc(String(pr.status||'unknown'))+'", which this build does not recognise as something to carry on from.' };
   if(pr.takeoff_version === undefined || pr.takeoff_version === null) return { code:'legacy',
