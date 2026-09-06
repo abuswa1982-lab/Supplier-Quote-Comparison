@@ -103,6 +103,11 @@
   }
   .pagetabs button.on{color:var(--navy);border-bottom-color:var(--navy)}
   .pagetabs button:hover{color:var(--navy)}
+  /* Which file am I actually looking at? Without this on screen there is no way to tell
+     one build from another, and an old copy looks exactly like a new one. */
+  .buildstamp{margin-left:auto;align-self:center;font-family:var(--display);font-size:11px;
+    letter-spacing:.04em;color:var(--muted);padding:0 2px 8px;white-space:nowrap}
+  .buildstamp b{color:var(--navy);font-weight:600}
   .pagetabs .tabcount{
     font-family:var(--mono);font-size:10px;font-weight:600;background:var(--blue-tint);color:var(--navy);
     border:1px solid #CBDDEE;border-radius:8px;padding:1px 6px;margin-left:5px;vertical-align:1px;
@@ -451,6 +456,7 @@
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B7</b> &middot; 2026-09-06</span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
