@@ -471,7 +471,7 @@
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B13</b> &middot; 2026-09-06</span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B15</b> &middot; 2026-09-06</span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -596,6 +596,7 @@
         </button>
         <button class="stopbtn" id="cmpStopBtn" onclick="stopCompare()" type="button">Stop</button>
       </div>
+      <div id="cmpDecision"></div>
       <div class="progline" id="cmpProg"></div>
       <p class="hint" style="margin-top:12px"><b>Why it runs in so many small passes rather than one big one.</b> Categories are kept apart so a copper line is never asked to match itself against a toilet, and each category is then walked 25 takeoff lines at a time. That is not caution for its own sake: the answer has to carry a row for every line with a verdict and a reason for every supplier, and asking for a hundred of those in one go runs the answer out of room part way through. If a chunk still comes back short, it gets split in half and retried on its own rather than the whole category being written off.</p>
     </div>
@@ -635,6 +636,15 @@
       <input type="file" id="libFile" accept=".xlsx,.xlsm,.xls,.csv,.tsv" multiple style="display:none">
       <div class="progline" id="libStatus"></div>
       <p class="hint">Read straight off the grid: the first row that looks like headings becomes the column names and everything under it becomes rows. Nothing is interpreted, nothing is reworded, nothing is dropped. If a sheet has a title block above the headings it gets skipped automatically, and you can change which row is the heading afterwards.</p>
+    </div>
+    <div class="card">
+      <h2>Test this against the takeoff</h2>
+      <p class="hint" style="margin:0 0 10px">Every line on the takeoff, looked up in these sheets right here on this computer. No API call, nothing sent anywhere, nothing charged. Run it before paying for a comparison so you know whether the library column will actually have prices in it, rather than finding out after the bill.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn2 primary" onclick="libTestAgainstTakeoff(this)" type="button">Test against the takeoff</button>
+        <span class="hint" id="libTestMsg" style="margin:0"></span>
+      </div>
+      <div id="libTestOut"></div>
     </div>
     <div id="libList"></div>
   </div>
@@ -3045,11 +3055,9 @@ function renderReadiness(){
                           : 'No supplier quotes read yet, so only the coverage check will run.');
     bits.push(reqCount ? ('<b>'+reqCount+' bid requirement'+(reqCount===1?'':'s')+' to check,</b> so the takeoff itself gets checked for gaps.')
                        : 'Nothing pulled from the Bid Requirements Reader, so the takeoff will not be checked for gaps. That is the check that catches scope nobody quoted because nobody asked for it.');
-    const priorRun0 = (cmpData && cmpData._run) || null;
-    const canResume0 = isResumableRun(priorRun0) && takeoffData
-      && priorRun0.takeoff_version === takeoffData.version
-      && (priorRun0.suppliers||[]).slice().sort().join('|') === read.map(s=>s.name).sort().join('|');
-    const catCount = countComparePasses(canResume0 ? (priorRun0.done||[]) : []);
+    const plan0 = resumePlan();
+    const canResume0 = plan0.canResume;
+    const catCount = countComparePasses(plan0.done);
     const effReq = effectiveRequirementCount();
     const covPasses = countCoveragePassesLeft(canResume0 ? cmpData : null);
     const needsTriage = bidReq && !bidReq.triaged && (bidReq.findings||[]).length > 200;
@@ -3191,6 +3199,34 @@ function categoryCoverage(){
 // The categories that genuinely have every one of their takeoff lines compared.
 function coveredCategories(){ return categoryCoverage().filter(c=>!c.short).map(c=>c.category); }
 function shortCategories(){ return categoryCoverage().filter(c=>c.short).map(c=>c.category); }
+// ONE place decides whether a run resumes and what it skips. This existed in two places -
+// the readiness banner read the stored "done" list while the run counted rows - so the banner
+// could promise 15 passes while the run went and did 18. Whatever this returns is what happens,
+// and it hands back the reasons so a refusal is never silent.
+function resumePlan(){
+  const read = suppliers.filter(s=>s.data);
+  const prior = cmpData;
+  const priorRun = (prior && prior._run) || null;
+  const why = [];
+  let can = true;
+  if(!prior || !(prior.rows||[]).length){ can = false; why.push('no comparison rows are loaded'); }
+  else if(!priorRun){ can = false; why.push('the stored comparison carries no run record'); }
+  else {
+    if(!takeoffData){ can = false; why.push('no takeoff is loaded'); }
+    else if(priorRun.takeoff_version !== takeoffData.version){
+      can = false; why.push('it was built on takeoff v'+priorRun.takeoff_version+' and the takeoff loaded now is v'+takeoffData.version);
+    }
+    const was = (priorRun.suppliers||[]).slice().sort();
+    const now = read.map(s=>s.name).slice().sort();
+    if(was.join('|') !== now.join('|')){
+      can = false;
+      why.push('it covered '+(was.length?was.join(', '):'no suppliers')+' and the quotes loaded now are '+(now.length?now.join(', '):'none'));
+    }
+    if(can && !isResumableRun(priorRun)){ can = false; why.push('the stored run has nothing left outstanding'); }
+  }
+  const done = can ? coveredCategories() : [];
+  return { canResume: can, done: done, reasons: why, priorRun: priorRun };
+}
 function neededCategories(){
   const per = {};
   ((takeoffData&&takeoffData.items)||[]).forEach(it=>{ per[catOf(it)] = true; });
@@ -3310,12 +3346,22 @@ async function runCompare(){
   // against the same takeoff and the same set of suppliers, so that is checked first.
   const prior = cmpData;
   const priorRun = (prior && prior._run) || null;
-  const sameBasis = isResumableRun(priorRun)
-    && priorRun.takeoff_version === takeoffData.version
-    && (priorRun.suppliers||[]).slice().sort().join('|') === read.map(s=>s.name).sort().join('|');
-  // Skip only what is actually, verifiably there. Taking this from priorRun.done is what
-  // let a category with no rows in it be treated as finished.
-  const doneCats = sameBasis ? coveredCategories() : [];
+  const plan = resumePlan();
+  const sameBasis = plan.canResume;
+  const doneCats = plan.done.slice();
+  // Wipe the previous run's last message before anything else. Leaving it there meant last
+  // night's "category 1 of 9: Fixtures" sat on screen looking like this morning's first pass,
+  // which is indistinguishable from a restart and cost an afternoon of arguing about it.
+  document.getElementById('cmpProg').textContent = '';
+  document.getElementById('cmpDecision').innerHTML =
+    '<div class="note '+(sameBasis?'ok':'warn')+'" style="margin-top:10px"><b>'+
+    (sameBasis
+      ? ('Carrying on. Keeping '+doneCats.length+' categor'+(doneCats.length===1?'y':'ies')+
+         (doneCats.length?(' ('+doneCats.map(esc).join(', ')+')'):'')+', which will not be sent again. Running '+
+         (cats.filter(c=>doneCats.indexOf(c)<0).length)+': '+cats.filter(c=>doneCats.indexOf(c)<0).map(esc).join(', ')+'.')
+      : ('Starting from scratch - all '+cats.length+' categories.'))+'</b>'+
+    (plan.reasons.length ? '<div style="margin-top:6px">Not carrying on because '+plan.reasons.map(esc).join('; and ')+'.</div>' : '')+
+    '</div>';
   const all = { rows:[], exceptions:[], coverage:{ checks:[], gaps:[] },
     _run:{ status:'incomplete', categories:cats.slice(), done:doneCats.slice(), failed:[], suppliers:read.map(s=>s.name),
       takeoff_version: takeoffData.version, takeoff_lines:(takeoffData.items||[]).length,
@@ -5010,6 +5056,62 @@ function libBestMatch(text){
   best.why = 'matched on '+(bits.join(' and ') || 'wording')+', covering '+Math.round(best.score*100)+'% of it'+
     (!best.modelHit ? ', with no part or model number in common' : '');
   return best;
+}
+// Dry run of the library against the takeoff. Everything here is local and deterministic, so
+// it costs nothing and takes about a second; running it before a comparison is the difference
+// between knowing the library column will be full and hoping it will.
+async function libTestAgainstTakeoff(btn){
+  const msg = document.getElementById('libTestMsg'), out = document.getElementById('libTestOut');
+  msg.style.color = ''; out.innerHTML = '';
+  if(!takeoffData || !(takeoffData.items||[]).length){
+    out.innerHTML = '<div class="note warn" style="margin-top:12px"><b>No takeoff is loaded, so there is nothing to test against.</b> Load the project, or read the takeoff in on tab 1.</div>';
+    return;
+  }
+  if(!libIndex.length){
+    out.innerHTML = '<div class="note warn" style="margin-top:12px"><b>Nothing in the library yet.</b> Drop a price list in above first.</div>';
+    return;
+  }
+  const o = btn.textContent; btn.disabled = true; btn.textContent = 'Looking every line up…';
+  try{
+    await libLoadAll();
+    libIdx = {};          // roles may have changed since the sheets were indexed
+    libRowCache = {};
+    const items = takeoffData.items || [];
+    const res = items.map(it=>{
+      const text = [it.description, [it.manufacturer, it.model].filter(Boolean).join(' ')].filter(Boolean).join(' ');
+      return { line: it.description, m: libBestMatch(text) };
+    });
+    const hit    = res.filter(r=>r.m);
+    const priced = hit.filter(r=>r.m.price > 0);
+    const high   = hit.filter(r=>r.m.confidence === 'high');
+    const med    = hit.filter(r=>r.m.confidence === 'medium');
+    const low    = hit.filter(r=>r.m.confidence === 'low');
+    const pct = n => Math.round(n / items.length * 100);
+    const verdict = priced.length === 0
+      ? ['err', 'Not one takeoff line found a price in the library. The comparison would show an empty column, so this is worth sorting out before spending anything on a run.']
+      : pct(priced.length) < 25
+        ? ['warn', 'Only '+pct(priced.length)+'% of the takeoff found a price. That column will be mostly empty.']
+        : ['ok', pct(priced.length)+'% of the takeoff found a price in your library. That column will be worth having.'];
+    const sample = hit.slice(0, 12);
+    const misses = res.filter(r=>!r.m).slice(0, 8);
+    out.innerHTML =
+      '<div class="note '+verdict[0]+'" style="margin-top:12px"><b>'+priced.length.toLocaleString()+' of '+items.length.toLocaleString()+
+        ' takeoff lines found a price.</b> '+esc(verdict[1])+
+        '<div style="margin-top:6px">'+hit.length+' matched something at all ('+high.length+' confident, '+med.length+' likely, '+low.length+' unsure); '+
+        (hit.length - priced.length)+' matched a row that has no price in it.</div></div>'+
+      (sample.length ? '<div class="tablewrap"><table class="matrix"><thead><tr><th>Takeoff line</th><th>Matched in your library</th>'+
+        '<th style="width:90px">Price</th><th style="width:110px">How sure</th></tr></thead><tbody>'+
+        sample.map(r=>'<tr><td>'+esc(String(r.line).slice(0,70))+'</td>'+
+          '<td>'+esc(String(r.m.description).slice(0,70))+(r.m.part?('<div class="itemsub">'+esc(r.m.part)+'</div>'):'')+'</td>'+
+          '<td class="qtybox">'+(r.m.price ? money(r.m.price) : '<span class="mm miss">none</span>')+'</td>'+
+          '<td><span class="mm '+(r.m.confidence==='high'?'exact':r.m.confidence==='medium'?'equiv':'unclear')+'">'+esc(r.m.confidence)+'</span></td></tr>').join('')+
+        '</tbody></table></div><p class="hint" style="margin-top:6px">First '+sample.length+' matches, so you can see whether they are sane. If these look wrong the matching needs work, not the mapping.</p>' : '')+
+      (misses.length ? '<div class="note info" style="margin-top:12px"><b>A few that found nothing:</b><ul style="margin:6px 0 0;padding-left:20px">'+
+        misses.map(r=>'<li>'+esc(String(r.line).slice(0,90))+'</li>').join('')+'</ul></div>' : '');
+    msg.textContent = 'Done here on this computer. Nothing was sent and nothing was charged.';
+  }catch(e){
+    msg.textContent = e.message; msg.style.color = '#B4451F';
+  }finally{ btn.disabled = false; btn.textContent = o; }
 }
 // One cached answer per takeoff line for the life of a render.
 let libRowCache = {};
