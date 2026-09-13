@@ -470,7 +470,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B20</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B21</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -5632,7 +5632,7 @@ function libUnmatchedStems(){
   items.forEach(it=>{
     const stem = libStem(it.description);
     if(!stem) return;
-    const m = libBestMatch([it.description, it.notes].filter(Boolean).join(' '));
+    const m = libBestMatch([it.description, it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '));
     const ok = m && m.confidence !== 'low';
     if(!seen[stem]) seen[stem] = { stem, lines:[], notes:[], matched:0, unmatched:0, category: catOf(it) };
     if(seen[stem].lines.length < 4) seen[stem].lines.push(it.description);
@@ -5805,7 +5805,9 @@ async function libTestAgainstTakeoff(btn){
     libRowCache = {};
     const items = takeoffData.items || [];
     const res = items.map(it=>{
-      const text = [it.description, [it.manufacturer, it.model].filter(Boolean).join(' ')].filter(Boolean).join(' ');
+      // the dry run must ask exactly what a real run asks, or it reports a comfort that is not there
+      const text = [it.description, [it.manufacturer, it.model].filter(Boolean).join(' '),
+                    it.notes, bidTextForLine(it.description)].filter(Boolean).join(' ');
       return { line: it.description, m: libBestMatch(text) };
     });
     const hit    = res.filter(r=>r.m);
@@ -5840,13 +5842,29 @@ async function libTestAgainstTakeoff(btn){
     msg.textContent = e.message; msg.style.color = '#B4451F';
   }finally{ btn.disabled = false; btn.textContent = o; }
 }
+// The bid says "underslab sanitary shall be PVC Schedule 40". The price list says 4" X 10' SCH
+// 40 PVC PIPE. The takeoff says P100_SAN US 4". Two of those three share words; the takeoff is
+// the odd one out. So where the coverage check has tied a requirement to a line, that
+// requirement's wording joins the library lookup for that line: the bid brings the material,
+// the takeoff brings the size, and the size is what decides the price.
+const SPEC_NOISE = /\b(shall|be|is|are|the|all|any|each|with|and|or|for|of|to|in|on|at|as|per|by|from|conform(?:ing|s)?|comply(?:ing)?|accordance|requirements?|installed?|provided?|furnish(?:ed)?|approved|equal|manufacturer|section|specified|latest|edition|minimum|maximum)\b/gi;
+function bidTextForLine(line){
+  if(!line) return '';
+  const checks = coverageKeysByLine()[reqKey(line)] || [];
+  if(!checks.length) return '';
+  return checks.slice(0,2).map(c=>
+    [c.requirement, c.note].filter(Boolean).join(' ')
+      .replace(SPEC_NOISE,' ').replace(/\s+/g,' ').trim().slice(0,140)
+  ).join(' ');
+}
 // One cached answer per takeoff line for the life of a render.
 let libRowCache = {};
 function libraryOffer(row){
   if(!libIndex.length) return null;
   const key = reqKey((row.takeoff_line||row.item||'')+'|'+(row.spec_model||''));
   if(key in libRowCache) return libRowCache[key];
-  const m = libBestMatch([row.takeoff_line || row.item, row.spec_model].filter(Boolean).join(' '));
+  const m = libBestMatch([row.takeoff_line || row.item, row.spec_model, row.notes,
+                          bidTextForLine(row.takeoff_line || row.item)].filter(Boolean).join(' '));
   libRowCache[key] = m;
   return m;
 }
@@ -5920,7 +5938,8 @@ function libraryLookupForAsk(){
   const items = (takeoffData && takeoffData.items) || [];
   const matches = [];
   items.forEach(it=>{
-    const m = libBestMatch([it.description, [it.manufacturer,it.model].filter(Boolean).join(' ')].filter(Boolean).join(' '));
+    const m = libBestMatch([it.description, [it.manufacturer,it.model].filter(Boolean).join(' '),
+                            it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '));
     if(m) matches.push({ takeoff_line: it.description, library_description: m.description,
       part: m.part||'', price: m.price||0, uom: m.uom||'', confidence: m.confidence, matched_because: m.why });
   });
