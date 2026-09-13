@@ -470,7 +470,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B18</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B20</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -657,6 +657,15 @@
         <span class="hint" id="libCloudMsg" style="margin:0"></span>
       </div>
       <p class="hint" style="margin:10px 0 0">Nothing here goes near the AI and nothing is charged: this only moves rows that have already been read off your spreadsheet.</p>
+    </div>
+    <div class="card">
+      <h2>Teach it your shorthand</h2>
+      <p class="hint" style="margin:0 0 10px">Your takeoff says <b>SAN US 4"</b>. Your price list says <b>4" X 10' SCH 40 PVC PIPE</b>. Same pipe, and not one word in common &mdash; one says what it is for, the other says what it is. No amount of word matching will join those, so this asks once what your shorthand means, in the vocabulary your own price list uses. It works on the distinct shorthand, not on every line, so <b>SAN US 4"</b>, <b>3"</b> and <b>2"</b> are one translation, not three. What it learns is saved with the library and used on every job after this one.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn2 primary" onclick="runLibraryVocab(this)" type="button">Teach it the shorthand on this takeoff</button>
+        <span class="hint" id="vocabMsg" style="margin:0"></span>
+      </div>
+      <div id="vocabOut"></div>
     </div>
     <div class="card">
       <h2>Test this against the takeoff</h2>
@@ -972,6 +981,15 @@ async function libPullFromCloud(btn, quiet){
         roles:sh.roles||{}, use: sh.use !== false });
       delete libCache[sh.id];
       added++;
+    }
+    // The shorthand it has been taught travels with the price list: it is the more valuable
+    // half, because a price list can be downloaded again and this cannot.
+    if(latest.lib_vocab){
+      try{
+        const v = JSON.parse(latest.lib_vocab.data);
+        libApplyVocab(v.vocab||{});
+        libVocabMeta = v.meta || null;
+      }catch(e){ /* a damaged vocabulary must not stop the rows arriving */ }
     }
     libIdx = {}; libRowCache = {}; libLoadedAll = false;
     await libRefreshIndex();
@@ -2160,6 +2178,27 @@ Return ONLY valid JSON, no prose, no markdown fences. Schema:
   ]
 }`;
 
+const SYSTEM_LIB_VOCAB = `You translate a plumbing estimator's takeoff shorthand into the words that appear in his supply house price list. You do this FROM EVIDENCE ONLY.
+
+An estimator writes what a run of pipe is FOR: "SAN US" is sanitary waste below the slab. A price list says what the product IS: "SCH 40 PVC PIPE". They describe the same item and share no words, which is why a text match fails.
+
+But WHICH material it is - PVC, cast iron, no-hub - is NOT yours to decide. Getting it wrong puts a confident wrong price on hundreds of feet of pipe. So you may only answer from what you are shown.
+
+WHAT YOU ARE GIVEN, in order of authority:
+1. NOTES ON THE TAKEOFF LINES themselves. The estimator often writes the material straight onto the line ("PVC PIPE SCH 40, UNDERSLAB"). This is the strongest evidence there is: he has already decided.
+2. THE BID REQUIREMENTS, taken from the specification. A section like "22 13 16 Sanitary Waste and Vent Piping" states what the material must be. Cite the section.
+3. A SAMPLE OF THE PRICE LIST's own descriptions, so you phrase the answer in the wording that list actually uses - not to decide what the material is.
+
+RULES, and rule 1 outranks everything:
+1. NEVER infer a material from trade convention. If neither the takeoff notes nor the bid requirements say what SAN US is made of, return an empty expansion, set evidence to "none", and say plainly that nothing on file specifies it. "It is usually PVC" is exactly the answer that must not be given.
+2. Quote your evidence. In "evidence_quote" put the words you took it from, verbatim and short. In "evidence" put "takeoff notes", "bid requirements" or "none".
+3. Phrase the expansion in the price list's vocabulary. If that list writes "SCH 40" then write "sch 40", not "schedule 40". Matching is on words, so the words must be theirs.
+4. NEVER include the size. Sizes are handled separately and a size here would match the wrong diameter.
+5. Keep each expansion under about twelve words. These are search terms, not sentences.
+6. Confidence is about the EVIDENCE, not about your own hunch: "high" only when the takeoff notes or a cited spec section state the material outright.
+
+Return ONLY this JSON:
+{"terms":[{"stem":"the stem exactly as given","expansion":"words from the price list's vocabulary, or empty string","evidence":"takeoff notes|bid requirements|none","evidence_quote":"the words you took it from, verbatim","confidence":"high|medium|low","why":"one short sentence"}]}`;
 const SYSTEM_ASK_P2 = `You are answering one question about a construction bid's material package, using ONLY the data provided to you: the estimator's takeoff (which is the reference for the whole job), extracted supplier quote lines, the fixture/equipment schedule, the bid requirements and kickoff points, the comparison result, and the estimator's own price list under "library", whichever of those are present.
 
 THE LIBRARY IS THE ESTIMATOR'S OWN COST, NOT A QUOTE. When asked what something costs, answer from the supplier quotes and from the library separately and say which is which: a supplier price is an offer someone has made, a library price is what the item costs the estimator. Never present a library price as a supplier's quote and never let one stand in for the other. If no supplier quoted an item but the library has it, say exactly that - it is the most useful answer there is, and reporting "no price found" when the library holds one is a failure. The library carries only the takeoff lines that matched something; a line absent from it means nothing in the price list resembled it, not that the price list is missing.
@@ -4025,6 +4064,7 @@ function renderCompare(){
   const run = cmpData._run || {};
   const cov = sum.coverage || {};
 
+  _coverKeys = null;
   let html = takeoffStaleBanner() + quoteTermsHtml();
   if(run.status === 'incomplete' && !(run.failed||[]).length){
     html += '<div class="note err"><b>This run never reached the end.</b> It is what was saved as it went, from a run that was interrupted rather than one that failed. '+
@@ -4190,7 +4230,8 @@ function renderCompare(){
       matrixHtml += '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
         '<span class="c">'+rows.length+' item'+(rows.length===1?'':'s')+(flagged?' &middot; '+flagged+' flagged':'')+'</span></div>'+
         '<div class="collapsible-body" style="display:block">'+
-        '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:230px">Takeoff line</th>'+
+        '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:230px">Item</th>'+
+        '<th class="supcol" style="min-width:150px">Source &amp; trade</th>'+
         names.map(n=>'<th class="supcol" style="min-width:190px">'+esc(n)+'</th>').join('')+
         (libraryColumnActive()?'<th class="supcol libcol" style="min-width:190px">Your library</th>':'')+
         '</tr></thead><tbody>'+
@@ -4213,7 +4254,7 @@ function renderCompare(){
             (r.spec_model && r.allows_equal===false ? '<div class="itemsub" style="color:var(--rust)">no approved equal permitted</div>' : '')+
             ((r.issues||[]).length ? '<div class="why" style="color:var(--rust)">'+esc(r.issues.join(' · '))+'</div>' : '')+
             priceSanityHtml(r)+
-          '</td>'+cells+'</tr>';
+          '</td>'+sourceTradeCell(r)+cells+'</tr>';
         }).join('')+'</tbody></table></div></div></div>';
     });
   }
@@ -5315,6 +5356,7 @@ function renderLibrary(){
         '</select></div>').join('');
     });
   });
+  renderVocab();
 }
 function libConfirmDelete(id){
   const ix = libIndex.find(x=>x.id===id);
@@ -5391,6 +5433,224 @@ const TRADE_ABBREV = {
   ins:'insulation', hgr:'hanger', slv:'sleeve'
 };
 function libExpand(tok){ return TRADE_ABBREV[tok] || tok; }
+// Learn the shorthand. One pass over the DISTINCT stems, not over every line, because SAN US 4"
+// and SAN US 3" and SAN US 2" are one product in three sizes. That is the difference between
+// paying for thirty translations and paying for three hundred, and it is paid once ever.
+async function runLibraryVocab(btn){
+  const key = getKey();
+  const msg = document.getElementById('vocabMsg');
+  const set = (t, err)=>{ if(msg){ msg.textContent = t; msg.style.color = err ? '#B4451F' : ''; } };
+  if(!key){ set('No API key. Open Setup at the top and paste your Anthropic key.', true); return; }
+  if(!takeoffData){ set('No takeoff is loaded, so there is no shorthand to learn.', true); return; }
+  if(!libIndex.length){ set('No price list is loaded, so there is nothing to translate into.', true); return; }
+  const o = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Learning…'; }
+  try{
+    await libLoadAll();
+    const stems = libUnmatchedStems();
+    if(!stems.length){ set('Every line on this takeoff already finds something. Nothing to learn.'); return; }
+    // A sample of the price list's own wording, so the answer comes back in the vocabulary the
+    // list actually uses rather than in textbook English.
+    const sample = [];
+    libIndex.forEach(ix=>{
+      const rec = libCache[ix.id];
+      if(!rec) return;
+      const step = Math.max(1, Math.floor(rec.rows.length / 120));
+      for(let i=0;i<rec.rows.length && sample.length<240;i+=step) sample.push(libRowText(rec, rec.rows[i]).slice(0,90));
+    });
+    // The requirements that actually say what something is MADE OF. Narrowed here for free so
+    // the model is handed the piping and material sections rather than the whole bid.
+    const MATERIAL_RE = /\b(pvc|cpvc|cast iron|no.?hub|ductile|copper|type [klm]\b|pex|polypropylene|carbon steel|galvani[sz]ed|schedule\s*\d+|sch\.?\s*\d+|astm|dwv|service weight|press|soldered|brazed|material)\b/i;
+    const materialReqs = ((bidReq && (bidReq.triaged || bidReq.findings)) || [])
+      .filter(f=>MATERIAL_RE.test([f.requirement, f.detail].filter(Boolean).join(' ')))
+      .slice(0, 160)
+      .map(f=>({ requirement:f.requirement, detail:(f.detail||'').slice(0,240), section:f.source||'' }));
+    const learned = {}, report = [];
+    const BATCH = 40;
+    for(let i=0;i<stems.length;i+=BATCH){
+      const batch = stems.slice(i, i+BATCH);
+      set('Translating '+(i+1)+' to '+Math.min(i+BATCH, stems.length)+' of '+stems.length+' pieces of shorthand…');
+      const r = await fetchAndParseJSON(key, [{ type:'text', text:
+          'SHORTHAND STEMS FROM THE TAKEOFF. The notes are what the estimator himself wrote on those lines and are the strongest evidence you have:\n' +
+          JSON.stringify(batch.map(x=>({ stem:x.stem, examples:x.lines, takeoff_notes:x.notes,
+                                         category:x.category, lines_affected:x.unmatched }))) +
+          '\n\nBID REQUIREMENTS ABOUT MATERIALS, from the specification. Cite the section you use:\n' +
+          JSON.stringify(materialReqs) +
+          '\n\nA SAMPLE OF DESCRIPTIONS FROM THIS ESTIMATOR\'S OWN PRICE LIST, so you can phrase the answer in the wording that list uses:\n' +
+          JSON.stringify(sample) }],
+        SYSTEM_LIB_VOCAB, null, 'vocabMsg', 'the shorthand translation', MAX_TOKENS);
+      (r.terms||[]).forEach(t=>{
+        const stem = libStem(t.stem || '');
+        if(!stem) return;
+        report.push({ stem, expansion:t.expansion||'', confidence:t.confidence||'low', why:t.why||'',
+                      evidence:t.evidence||'none', quote:t.evidence_quote||'' });
+        // Nothing on file said what it is made of, so nothing is learned. A blank here is the
+        // correct answer, and it is the one that keeps a guessed material off 386 feet of pipe.
+        if(t.evidence === 'none' || !String(t.expansion||'').trim()) return;
+        learned[stem] = String(t.expansion).trim().toLowerCase();
+      });
+    }
+    libVocabMeta = { at:new Date().toISOString(), stems:stems.length,
+                     learned:Object.keys(learned).length, report:report };
+    libApplyVocab(Object.assign({}, LIB_VOCAB, learned));
+    try{ await saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta }); }
+    catch(e){ set('Learned it, but it could not be saved to the database: '+e.message, true); }
+    renderLibrary(); renderCompare(); renderBuySheet(); updateCounts();
+    set(Object.keys(learned).length+' of '+stems.length+' translated and saved. This is now a lookup, on this job and every job after it.');
+  }catch(e){
+    set(e.message, true);
+  }finally{ if(btn){ btn.disabled = false; btn.textContent = o; } }
+}
+// What it has been taught, so it can be read and corrected rather than trusted blindly.
+function renderVocab(){
+  const out = document.getElementById('vocabOut');
+  if(!out) return;
+  const keys = Object.keys(LIB_VOCAB);
+  const meta = libVocabMeta || {};
+  const report = meta.report || [];
+  const refused = report.filter(r=>r.evidence === 'none' || !String(r.expansion||'').trim());
+  if(!keys.length && !refused.length){ out.innerHTML = ''; return; }
+  const byStem = {};
+  report.forEach(r=>{ byStem[r.stem] = r; });
+  const evBadge = e => e === 'takeoff notes' ? 'exact' : e === 'bid requirements' ? 'equiv' : 'unclear';
+  out.innerHTML =
+    (keys.length ? '<div class="note ok" style="margin-top:12px"><b>'+keys.length+' piece'+(keys.length===1?'':'s')+' of shorthand learned, each one from something on file.</b> '+
+      'Matching against these costs nothing from here on, on this job and every job after it.</div>' : '')+
+    (keys.length ? '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:150px">Your shorthand</th>'+
+      '<th style="min-width:230px">What the price list calls it</th><th style="width:130px">Evidence</th>'+
+      '<th>What it was read from</th></tr></thead><tbody>'+
+      keys.sort().map(k=>{
+        const r = byStem[k] || {};
+        return '<tr><td class="pricebox">'+esc(k)+'</td>'+
+          '<td><input value="'+esc(LIB_VOCAB[k])+'" onchange="libEditVocab('+JSON.stringify(k).replace(/"/g,'&quot;')+', this.value)" style="width:100%"></td>'+
+          '<td><span class="mm '+evBadge(r.evidence)+'">'+esc(r.evidence || 'yours')+'</span>'+
+            (r.confidence?'<div class="itemsub">'+esc(r.confidence)+' confidence</div>':'')+'</td>'+
+          '<td>'+(r.quote?'<div class="itemdesc">&ldquo;'+esc(String(r.quote).slice(0,140))+'&rdquo;</div>':'<div class="itemsub">you typed this in</div>')+
+            '<div class="why">'+esc(r.why||'')+'</div></td></tr>';
+      }).join('')+'</tbody></table></div>' : '')+
+    (refused.length ? '<div class="note warn" style="margin-top:12px"><b>'+refused.length+' piece'+(refused.length===1?'':'s')+' of shorthand could not be translated, and that is the right answer.</b> '+
+      'Nothing on the takeoff and nothing in the bid documents says what these are made of, so nothing has been assumed. '+
+      'Write the material on the takeoff line, or find it in the spec, and run this again &mdash; or type the answer in yourself below and it is saved like any other.'+
+      '<div class="tablewrap" style="margin-top:8px"><table class="matrix"><thead><tr><th style="width:150px">Shorthand</th><th style="min-width:230px">Type what it is, if you know</th><th>Why it stopped</th></tr></thead><tbody>'+
+      refused.map(r=>'<tr class="hasissue"><td class="pricebox">'+esc(r.stem)+'</td>'+
+        '<td><input value="" placeholder="e.g. sch 40 pvc pipe" onchange="libEditVocab('+JSON.stringify(r.stem).replace(/"/g,'&quot;')+', this.value)" style="width:100%"></td>'+
+        '<td class="why">'+esc(r.why||'nothing on file specifies the material')+'</td></tr>').join('')+
+      '</tbody></table></div></div>' : '')+
+    '<p class="hint" style="margin-top:8px">Edit any of these and it takes effect at once. Your correction outranks anything read off a document: it is what every future job will use.</p>';
+}
+function libEditVocab(stem, value){
+  const v = Object.assign({}, LIB_VOCAB);
+  if(String(value||'').trim()) v[stem] = String(value).trim().toLowerCase(); else delete v[stem];
+  libApplyVocab(v);
+  saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta }).catch(()=>{});
+  renderCompare(); renderBuySheet(); renderLibrary();
+}
+// ------------------------------------------------- source and trade
+// Where a line came from, and whose work it is. Both belong on the comparison itself: a row is
+// far easier to judge when you can see that the bid asks for it as well as the takeoff, or that
+// it is really the mechanical contractor's problem.
+// Which takeoff lines the coverage check tied a bid requirement to. Built once per render.
+let _coverKeys = null;
+function coverageKeysByLine(){
+  if(_coverKeys) return _coverKeys;
+  _coverKeys = {};
+  (((cmpData && cmpData.coverage && cmpData.coverage.checks) || [])).forEach(c=>{
+    if(!c.takeoff_line) return;
+    if(c.verdict !== 'covered' && c.verdict !== 'partial') return;
+    const k = reqKey(c.takeoff_line);
+    if(!_coverKeys[k]) _coverKeys[k] = [];
+    _coverKeys[k].push(c);
+  });
+  return _coverKeys;
+}
+function rowSource(row){
+  const line = row.takeoff_line || row.item || '';
+  if(row.required_source === 'quotes only')
+    return { label:'QUOTE ONLY', tone:'unclear', why:'not on the takeoff at all - a supplier put it on their quote' };
+  const hits = coverageKeysByLine()[reqKey(line)] || [];
+  if(hits.length)
+    return { label:'BOTH', tone:'exact', hits:hits,
+             why:'on the takeoff, and the bid asks for it: '+String(hits[0].requirement||'').slice(0,80) };
+  if(!(((cmpData&&cmpData.coverage&&cmpData.coverage.checks)||[]).length))
+    return { label:'TAKEOFF', tone:'equiv', why:'on the takeoff. The bid has not been checked against it yet.' };
+  return { label:'TAKEOFF', tone:'equiv', why:'on the takeoff, and nothing in the bid requirements was tied to it' };
+}
+function rowTrade(row){
+  const src = rowSource(row);
+  // Where the bid tied a requirement to this line, that requirement carries a spec section and
+  // the section is the trade. That is the strongest answer available.
+  if(src.hits && src.hits.length){
+    const t = tradeOf({ requirement: src.hits[0].requirement, detail: src.hits[0].note || '', source: src.hits[0].source || '' });
+    if(t.trade !== 'Not sure') return t;
+  }
+  // Otherwise read the line itself. A line on your own takeoff is your work unless the words
+  // plainly say otherwise, so an unreadable one lands as plumbing rather than as a shrug.
+  const text = [row.takeoff_line || row.item, row.spec_model, row.category].filter(Boolean).join(' ');
+  for(const [re, trade, mine] of TRADE_WORDS){
+    const m = text.match(re);
+    if(m) return { trade:trade, mine:mine, sure:false, why:'read off the line itself, from "'+m[0]+'"' };
+  }
+  return { trade:'Plumbing', mine:true, sure:false, why:'on your own takeoff and nothing in it points at another trade' };
+}
+function sourceTradeCell(row){
+  const s = rowSource(row), t = rowTrade(row);
+  const badge = t.mine === true ? 'exact' : t.mine === false ? 'miss' : 'unclear';
+  return '<td class="supcell">'+
+    '<span class="mm '+s.tone+'">'+s.label+'</span>'+
+    '<div style="margin-top:4px"><span class="mm '+badge+'">'+esc(t.trade)+'</span></div>'+
+    '<div class="why">'+esc(s.why)+'</div>'+
+    (t.mine === false ? '<div class="why" style="color:var(--rust)">not your scope on the face of it &mdash; '+esc(t.why)+'</div>'
+                      : '<div class="why">'+esc(t.why)+'</div>')+
+  '</td>';
+}
+// ------------------------------------------- the shorthand it has learned
+// A takeoff says P100_SAN US 4". A price list says 4" X 10' SCH 40 PVC PIPE. Those share one
+// token - the 4 - so no amount of word matching will ever join them: one describes what the
+// pipe is FOR, the other what it IS. The bridge is trade knowledge, and trade knowledge is
+// worth paying for exactly once. This holds what has been learned: "san us" means schedule 40
+// PVC DWV drainage pipe. After that it is a lookup, on this job and on every job after it.
+let LIB_VOCAB = {};        // shorthand token -> the words a supply house would use
+let libVocabMeta = null;   // when it was learned, and from what
+// The part of a takeoff line that is its shorthand, with the job's own prefix and the size
+// stripped off, because SAN US 4" and SAN US 3" are the same product in two sizes and should
+// only ever be paid for once.
+function libStem(line){
+  return String(line==null?'':line)
+    .toLowerCase()
+    .replace(/^[a-z]{1,3}\d{2,4}[_\s-]+/,'')      // P100_ , M22- , the sheet's own section code
+    .replace(/\d+\s*[-\/]\s*\d+\s*["']?/g,' ')  // 1-1/2"
+    .replace(/\d+(\.\d+)?\s*(in\b|inch(es)?\b|"|')/g,' ')
+    .replace(/\b\d+(\.\d+)?\b/g,' ')
+    .replace(/[^a-z\s]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+// Every distinct shorthand on the takeoff that the library cannot currently place.
+function libUnmatchedStems(){
+  const items = (takeoffData && takeoffData.items) || [];
+  const seen = {};
+  items.forEach(it=>{
+    const stem = libStem(it.description);
+    if(!stem) return;
+    const m = libBestMatch([it.description, it.notes].filter(Boolean).join(' '));
+    const ok = m && m.confidence !== 'low';
+    if(!seen[stem]) seen[stem] = { stem, lines:[], notes:[], matched:0, unmatched:0, category: catOf(it) };
+    if(seen[stem].lines.length < 4) seen[stem].lines.push(it.description);
+    // What the estimator wrote on the line himself. This is the best evidence of all and it was
+    // being thrown away.
+    if(it.notes && seen[stem].notes.length < 4 && seen[stem].notes.indexOf(it.notes) < 0) seen[stem].notes.push(it.notes);
+    if(ok) seen[stem].matched++; else seen[stem].unmatched++;
+  });
+  return Object.keys(seen).map(k=>seen[k])
+    .filter(x=>x.unmatched > 0)
+    .sort((a,b)=>b.unmatched-a.unmatched);
+}
+function libApplyVocab(v){
+  LIB_VOCAB = {};
+  Object.keys(v||{}).forEach(k=>{ LIB_VOCAB[k] = v[k]; });
+  libIdx = {}; libRowCache = {};      // the index was built on the old vocabulary
+}
+
 function libTokens(t){
   const raw = String(t==null?'':t).toLowerCase()
     .replace(/[^a-z0-9./"'-]+/g,' ')
@@ -5439,8 +5699,14 @@ function libEnsureIndex(rec){
   libIdx[rec.id] = idx;
   return idx;
 }
+// What the takeoff line is asking for, plus anything the tool has been taught about that
+// shorthand. Only the query side is expanded: the price list says what it says.
+function libQueryText(text){
+  const learned = LIB_VOCAB[libStem(text)];
+  return learned ? (String(text||'') + ' ' + learned) : text;
+}
 function libBestMatch(text){
-  const qTokens = libTokens(text);
+  const qTokens = libTokens(libQueryText(text));
   if(!qTokens.length) return null;
   const qWeightTotal = qTokens.reduce((a,t)=>a+libWeight(t), 0);
   let best = null, runnersUp = 0;
@@ -5588,7 +5854,7 @@ function libraryColumnActive(){ return libIndex.length > 0 && libLoadedAll; }
 function libCellHtml(row){
   const m = libraryOffer(row);
   if(!m) return '<td class="supcell libcell"><span class="mm miss">NOT IN LIBRARY</span>'+
-    '<div class="why">nothing in your price list looks like this line</div></td>';
+    '<div class="why">no match on wording. The item may well be in your price list under a different description &mdash; teach it this shorthand once on the Library tab and it will find it from then on.</div></td>';
   const badge = m.confidence==='high' ? 'exact' : m.confidence==='medium' ? 'equiv' : 'unclear';
   const label = m.confidence==='high' ? 'IN LIBRARY' : m.confidence==='medium' ? 'LIKELY' : 'POSSIBLE';
   return '<td class="supcell libcell">'+
