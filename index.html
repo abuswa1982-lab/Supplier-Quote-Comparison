@@ -466,12 +466,11 @@
     <button id="ptab-takeoff" class="on" onclick="setPageTab('takeoff')" type="button">1 &middot; Takeoff<span class="tabcount" id="tc-to">0</span></button>
     <button id="ptab-quotes" onclick="setPageTab('quotes')" type="button">2 &middot; Supplier Quotes<span class="tabcount" id="tc-quotes">0</span></button>
     <button id="ptab-bidreq" onclick="setPageTab('bidreq')" type="button">3 &middot; What the Bid Requires<span class="tabcount" id="tc-req">0</span></button>
-    <button id="ptab-compare" onclick="setPageTab('compare')" type="button">4 &middot; Comparison</button>
-    <button id="ptab-exceptions" onclick="setPageTab('exceptions')" type="button">5 &middot; Exceptions<span class="tabcount" id="tc-exc">0</span></button>
-    <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet<span class="tabcount" id="tc-buy">0</span></button>
-    <button id="ptab-library" onclick="setPageTab('library')" type="button">Library<span class="tabcount" id="tc-lib">0</span></button>
+    <button id="ptab-library" onclick="setPageTab('library')" type="button">4 &middot; Library<span class="tabcount" id="tc-lib">0</span></button>
+    <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
+    <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B15</b> &middot; 2026-09-06</span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B18</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -604,22 +603,34 @@
     <div id="cmpResults"></div>
   </div>
 
-  <!-- ============================ TAB 5: EXCEPTIONS ============================ -->
+  <!-- Exceptions is gone as a tab. A list of 562 things is not a shortlist, it is a second job.
+       What was in it now lives where it is useful: facts about one line sit on that line, and
+       facts about a whole quote sit in a banner above the comparison, because those are the ones
+       that make every number on that quote not comparable. These two nodes stay so the old
+       render calls have somewhere harmless to write. -->
   <div id="page-exceptions" style="display:none">
-    <div class="note info">
-      <b>This is the screen that matters.</b> Everything the tool could resolve on its own is already gone from this list. What's left is what needs your judgment, sorted worst first. Two kinds sit here: <b>quote issues</b>, where a supplier's line does not square with the takeoff, and <b>takeoff gaps</b>, where the bid requires something the takeoff has no line for. The second kind is the expensive one, because no supplier will ever flag it for you.
-    </div>
-    <div id="excEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Read the quotes on tab 1, then run the comparison on tab 3.</p></div>
-    <div id="excResults"></div>
+    <div id="excEmpty" style="display:none"></div>
+    <div id="excResults" style="display:none"></div>
   </div>
 
-  <!-- ============================ TAB 6: BUY SHEET ============================ -->
+  <!-- ============================ TAB 6: BUY SHEET & RFQ ============================ -->
   <div id="page-buy" style="display:none">
     <div class="note info">
-      <b>Where the quotes can actually be compared, and where they only look like they can.</b> Every takeoff line falls into one of four states. Only one of them is a price comparison. Nothing here is asked of the AI: every figure on this tab is arithmetic done in the browser from what is already on screen, so you can check any of it by hand.
+      <b>Two halves of one question: for every line, is there a price worth standing behind?</b> Where there is, it is on the buy sheet with the reason it can be trusted. Where there is not, it drops into the RFQ list to go back out for quoting. Nothing on this tab is asked of the AI: every figure is arithmetic done in the browser from what is already on screen, so you can check any of it by hand.
     </div>
-    <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 4.</p></div>
+    <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 5.</p></div>
     <div id="buyResults"></div>
+    <div class="card" id="rfqCard" style="display:none">
+      <h2>Still needs a quote</h2>
+      <p class="hint" style="margin:0 0 10px">Every line with no price anybody will stand behind: nobody quoted it, or what was quoted could not be compared. Tick what you want to send out and it comes off as an Excel RFQ. This costs nothing and asks nothing of the AI.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn2" type="button" onclick="rfqSelectAll(true)">Select all</button>
+        <button class="btn2" type="button" onclick="rfqSelectAll(false)">Clear</button>
+        <button class="btn2 primary" type="button" onclick="downloadRfq()">Download RFQ as Excel</button>
+        <span class="hint" id="rfqMsg" style="margin:0"></span>
+      </div>
+      <div id="rfqOut"></div>
+    </div>
   </div>
 
   <!-- ============================ LIBRARY ============================ -->
@@ -636,6 +647,16 @@
       <input type="file" id="libFile" accept=".xlsx,.xlsm,.xls,.csv,.tsv" multiple style="display:none">
       <div class="progline" id="libStatus"></div>
       <p class="hint">Read straight off the grid: the first row that looks like headings becomes the column names and everything under it becomes rows. Nothing is interpreted, nothing is reworded, nothing is dropped. If a sheet has a title block above the headings it gets skipped automatically, and you can change which row is the heading afterwards.</p>
+    </div>
+    <div class="card">
+      <h2>Keep it in the database</h2>
+      <p class="hint" style="margin:0 0 10px">The price list is not about one job &mdash; it is yours, it applies to every job that comes in, and it can hold as many sheets as you want to put in it. Stored here it sits under its own name in the same database as everything else, so it comes back on any computer and on any project. The copy on this computer stays as well, because matching has to be instant and free.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn2 primary" onclick="libPushToCloud(this)" type="button">Send this library to the database</button>
+        <button class="btn2" onclick="libPullFromCloud(this)" type="button">Bring it down from the database</button>
+        <span class="hint" id="libCloudMsg" style="margin:0"></span>
+      </div>
+      <p class="hint" style="margin:10px 0 0">Nothing here goes near the AI and nothing is charged: this only moves rows that have already been read off your spreadsheet.</p>
     </div>
     <div class="card">
       <h2>Test this against the takeoff</h2>
@@ -859,6 +880,108 @@ function stripForSave(phase, data){
   delete copy.triaged;
   delete copy.triage_dropped;
   return copy;
+}
+// ------------------------------------------------ the standing library
+// The price list is not about one job. It is Camtech's, it applies to every job that comes in,
+// and it can hold several sheets. So it is stored under a reserved project name of its own
+// rather than under a job name: same Worker, same D1 table, one shared shelf that every job
+// reads from. Held locally as well, because matching against it must stay instant and free.
+const LIBRARY_PROJECT = '__modonix_library__';
+const LIB_CHUNK = 800;          // rows per stored row, so no single record gets unwieldy
+// A save that does not care which job is open.
+async function saveToProject(project, phase, data){
+  const url = workerUrl();
+  if(!url) throw new Error('The Worker URL in Setup is empty, so there is nowhere to put this.');
+  const res = await fetch(url + '/save', {
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ project_name: project, phase, data: JSON.stringify(data) })
+  });
+  if(!res.ok) throw new Error('The Worker answered with status ' + res.status + '.');
+  return true;
+}
+async function loadProjectRows(project){
+  const url = workerUrl();
+  if(!url) throw new Error('The Worker URL in Setup is empty.');
+  let res;
+  try{ res = await fetch(url + '/load?project=' + encodeURIComponent(project)); }
+  catch(e){ throw new Error('Could not reach the Worker at ' + url + '. Nothing was loaded.'); }
+  if(!res.ok) throw new Error('The Worker answered with status ' + res.status + '.');
+  const body = await res.json();
+  const rows = body.results || [];
+  const latest = {};
+  rows.forEach(r=>{ if(!latest[r.phase]) latest[r.phase] = r; });
+  return latest;
+}
+function libChunkKey(id, i){ return 'lib_rows:' + id + ':p' + String(i).padStart(6,'0'); }
+// Push every sheet up. Rows go in chunks; the manifest carries the column mapping, which is the
+// part that actually decides whether the library works, and which was previously one browser
+// away from being lost.
+async function libPushToCloud(btn){
+  const msg = document.getElementById('libCloudMsg');
+  const o = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
+  if(msg){ msg.style.color = ''; msg.textContent = ''; }
+  try{
+    const manifest = { sheets: [], at: new Date().toISOString() };
+    for(const ix of libIndex){
+      const rec = await libGet(ix.id);
+      if(!rec) continue;
+      const chunks = Math.max(1, Math.ceil((rec.rows||[]).length / LIB_CHUNK));
+      for(let i=0;i<chunks;i++){
+        if(msg) msg.textContent = 'Sending ' + rec.name + ', part ' + (i+1) + ' of ' + chunks + '…';
+        await saveToProject(LIBRARY_PROJECT, libChunkKey(rec.id, i),
+          { rows: (rec.rows||[]).slice(i*LIB_CHUNK, (i+1)*LIB_CHUNK) });
+      }
+      manifest.sheets.push({ id:rec.id, name:rec.name, file:rec.file, sheet:rec.sheet,
+        cols:rec.cols, roles:rec.roles||{}, header_row:rec.header_row,
+        rows:(rec.rows||[]).length, chunks:chunks, imported_at:rec.imported_at,
+        use: rec.use !== false });
+    }
+    await saveToProject(LIBRARY_PROJECT, 'lib_manifest', manifest);
+    const total = manifest.sheets.reduce((a,x)=>a+x.rows,0);
+    if(msg) msg.textContent = manifest.sheets.length + ' sheet' + (manifest.sheets.length===1?'':'s') +
+      ', ' + total.toLocaleString() + ' rows, now in the database. It will come back on any computer, on any job.';
+  }catch(e){
+    if(msg){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
+  }finally{ if(btn){ btn.disabled = false; btn.textContent = o; } }
+}
+// Pull it back down, replacing what is held locally.
+async function libPullFromCloud(btn, quiet){
+  const msg = document.getElementById('libCloudMsg');
+  const o = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Fetching…'; }
+  if(msg && !quiet){ msg.style.color = ''; msg.textContent = ''; }
+  try{
+    const latest = await loadProjectRows(LIBRARY_PROJECT);
+    if(!latest.lib_manifest){
+      if(msg && !quiet) msg.textContent = 'Nothing is stored in the database yet. Send what is on this computer up first.';
+      return 0;
+    }
+    const manifest = JSON.parse(latest.lib_manifest.data);
+    let added = 0;
+    for(const sh of (manifest.sheets||[])){
+      let rows = [];
+      for(let i=0;i<sh.chunks;i++){
+        const r = latest[libChunkKey(sh.id, i)];
+        if(!r) continue;
+        rows = rows.concat((JSON.parse(r.data).rows)||[]);
+      }
+      if(!rows.length) continue;
+      await libPut({ id:sh.id, name:sh.name, file:sh.file, sheet:sh.sheet, cols:sh.cols,
+        rows:rows, header_row:sh.header_row, imported_at:sh.imported_at,
+        roles:sh.roles||{}, use: sh.use !== false });
+      delete libCache[sh.id];
+      added++;
+    }
+    libIdx = {}; libRowCache = {}; libLoadedAll = false;
+    await libRefreshIndex();
+    renderLibrary(); updateCounts();
+    if(msg && !quiet) msg.textContent = added + ' sheet' + (added===1?'':'s') + ' brought down from the database onto this computer.';
+    return added;
+  }catch(e){
+    if(msg && !quiet){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
+    return 0;
+  }finally{ if(btn){ btn.disabled = false; btn.textContent = o; } }
 }
 async function saveToCloud(phase, data){
   const url = workerUrl(), project = projectName();
@@ -2037,7 +2160,9 @@ Return ONLY valid JSON, no prose, no markdown fences. Schema:
   ]
 }`;
 
-const SYSTEM_ASK_P2 = `You are answering one question about a construction bid's material package, using ONLY the data provided to you: the estimator's takeoff (which is the reference for the whole job), extracted supplier quote lines, the fixture/equipment schedule, the bid requirements and kickoff points, and the comparison result, whichever of those are present.
+const SYSTEM_ASK_P2 = `You are answering one question about a construction bid's material package, using ONLY the data provided to you: the estimator's takeoff (which is the reference for the whole job), extracted supplier quote lines, the fixture/equipment schedule, the bid requirements and kickoff points, the comparison result, and the estimator's own price list under "library", whichever of those are present.
+
+THE LIBRARY IS THE ESTIMATOR'S OWN COST, NOT A QUOTE. When asked what something costs, answer from the supplier quotes and from the library separately and say which is which: a supplier price is an offer someone has made, a library price is what the item costs the estimator. Never present a library price as a supplier's quote and never let one stand in for the other. If no supplier quoted an item but the library has it, say exactly that - it is the most useful answer there is, and reporting "no price found" when the library holds one is a failure. The library carries only the takeoff lines that matched something; a line absent from it means nothing in the price list resembled it, not that the price list is missing.
 
 RULES:
 1. Answer only from the provided data. If it genuinely is not in there, say so plainly. Do not guess, do not fill gaps with what is typical.
@@ -2137,7 +2262,10 @@ function updateCounts(){
   document.getElementById('tc-to').textContent = takeoffData ? (takeoffData.items||[]).length : 0;
   const reqN = (bidReq ? (((bidReq.triaged||bidReq.findings)||[]).length + (bidReq.kickoff_points||[]).length) : 0) + (specBasis ? (specBasis.items||[]).length : 0);
   document.getElementById('tc-req').textContent = reqN;
-  document.getElementById('tc-exc').textContent = cmpData ? (cmpData.exceptions||[]).length : 0;
+  // The exceptions tab no longer exists, so its badge may not be there. Everything it counted
+  // now shows where it is useful: on the row, or in the banner above the comparison.
+  const excBadge = document.getElementById('tc-exc');
+  if(excBadge) excBadge.textContent = cmpData ? (cmpData.exceptions||[]).length : 0;
   const libBadge = document.getElementById('tc-lib');
   if(libBadge){
     libBadge.textContent = libIndex.length;
@@ -2966,6 +3094,36 @@ async function pullFromPhase1(btn){
     btn.disabled = false; btn.textContent = o;
   }
 }
+// What trade each requirement belongs to, counted up, so it is obvious at a glance whether the
+// spec sections carried division numbers on this job or whether it is falling back on wording.
+function tradePanelHtml(){
+  if(!bidReq) return '';
+  const list = (bidReq.triaged || bidReq.findings || []);
+  if(!list.length) return '';
+  const rows = tradeBreakdown(list);
+  const mine    = rows.filter(r=>r.mine === true).reduce((a,r)=>a+r.n,0);
+  const others  = rows.filter(r=>r.mine === false).reduce((a,r)=>a+r.n,0);
+  const unsure  = rows.filter(r=>r.mine === null).reduce((a,r)=>a+r.n,0);
+  const bySection = rows.reduce((a,r)=>a+r.bySection,0);
+  const pct = Math.round(bySection / list.length * 100);
+  const tone = bySection ? 'ok' : 'warn';
+  return '<div class="note '+tone+'" style="margin-top:14px"><b>Trade: '+mine+' plumbing, '+others+' another trade, '+unsure+' to look at.</b> '+
+      (bySection
+        ? (pct+'% of these carry a spec section number, so their trade is read straight off the CSI division &mdash; a lookup, not a guess, and it costs nothing.')
+        : ('None of these carry a spec section number, so the trade is being read off the wording alone. That is weaker: treat "Not sure" as the honest answer and check those by hand.'))+
+      ' Work belonging to another trade will not be sent out for pricing.</div>'+
+    '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:200px">Trade</th><th style="width:90px">Count</th>'+
+      '<th style="width:150px">How it was decided</th><th>Example</th></tr></thead><tbody>'+
+    rows.map(r=>'<tr'+(r.mine===null?' class="hasissue"':'')+'>'+
+      '<td><span class="catchip">'+esc(r.trade)+'</span>'+
+        (r.mine===true?'<div class="itemsub">ours</div>':r.mine===false?'<div class="itemsub">not ours</div>':'<div class="itemsub" style="color:var(--rust)">needs a human</div>')+'</td>'+
+      '<td class="qtybox">'+r.n+'</td>'+
+      '<td class="itemsub">'+(r.bySection? (r.bySection+' by section number') : '')+
+        (r.bySection&&r.byWords?'<br>':'')+(r.byWords? (r.byWords+' by wording') : '')+'</td>'+
+      '<td><div class="itemdesc">'+esc(String((r.sample[0]||{}).req||'').slice(0,90))+'</div>'+
+        '<div class="why">'+esc((r.sample[0]||{}).why||'')+'</div></td>'+
+    '</tr>').join('')+'</tbody></table></div>';
+}
 function renderReqOut(){
   const out = document.getElementById('reqOut');
   if(!bidReq){ out.innerHTML=''; return; }
@@ -2977,7 +3135,7 @@ function renderReqOut(){
   out.innerHTML = '<div class="note ok" style="margin-top:14px"><b>'+f.length+' material bid requirement'+(f.length===1?'':'s')+'</b> ('+(bidReq._from_spec||0)+' from the bid documents, '+(bidReq._from_dwg||0)+' from the drawings) and <b>'+k.length+' kickoff point'+(k.length===1?'':'s')+'</b> loaded. '+
       'The comparison will check the takeoff for anything here it has no line against.'+
       (bidReq.kickoff_meta&&bidReq.kickoff_meta.verdict ? ' Kickoff verdict on this job was <b>'+esc(bidReq.kickoff_meta.verdict)+'</b>.' : '')+'</div>'+
-    ((bidReq._addenda||[]).length ? '<div class="note warn" style="margin-top:0"><b>'+bidReq._addenda.length+' addend'+(bidReq._addenda.length===1?'um is':'a are')+' in play:</b> '+esc(bidReq._addenda.join(', '))+'. '+
+    ((bidReq._addenda||[]).length ? '<div class="note warn" style="margin-top:0"><b>'+bidReq._addenda.length+' addend'+(bidReq._addenda.length===1?'um is':'ums are')+' in play:</b> '+esc(bidReq._addenda.join(', '))+'. '+
       (bidReq._from_add||0)+' of the requirements being checked came from '+(bidReq._addenda.length===1?'it':'them')+'. Where an addendum and the original spec say different things about the same item, the addendum is the one being used.</div>' : '')+
     (bidReq._had_drawings===false ? '<div class="note err" style="margin-top:0"><b>No drawings have been read for this job.</b> Only the written bid documents are being checked against the takeoff. Hidden scope usually lives in a drawing keynote rather than in a written requirement, so this is worth fixing in the Bid Requirements Reader before you trust the coverage result.</div>' : '')+
     '<div class="note info" style="margin-top:0"><b>Where that number comes from:</b> '+esc(bidReqAccountingText(bidReq))+
@@ -3009,7 +3167,7 @@ function renderReqOut(){
         return '<tr><td><span class="catchip">kickoff</span></td><td><div class="itemdesc">'+esc(x.label)+'</div>'+
           (x.detail && !dup ? '<div class="itemsub">'+esc(x.detail)+'</div>' : '')+'</td><td class="pricebox">'+esc(x.source)+'</td></tr>';
       }).join('')+
-    '</tbody></table></div></div>';
+    '</tbody></table></div></div>' + tradePanelHtml();
 }
 function renderSpecOut(){
   const out = document.getElementById('specOut');
@@ -3226,6 +3384,158 @@ function resumePlan(){
   }
   const done = can ? coveredCategories() : [];
   return { canResume: can, done: done, reasons: why, priorRun: priorRun };
+}
+// ------------------------------------------- quote-level terms banner
+// Of the ten things that used to fill the Exceptions tab, most were facts about ONE line and
+// belong on that line. Four are facts about a WHOLE quote - the price basis, a blanket
+// exclusion, a quantity stated per floor rather than per job, a supplier who sent two
+// documents - and those cannot live in a row because they change every row on that quote. Miss
+// one and you compare list against net and pick the wrong supplier for the right number. So
+// they sit above the table in four sentences, instead of buried in a list of 562.
+const QUOTE_LEVEL_KINDS = ['PRICE BASIS','EXCLUSION','QUANTITY BASIS','MULTIPLE QUOTES','HANDWRITTEN'];
+function quoteTermsHtml(){
+  if(!cmpData) return '';
+  const terms = (cmpData.exceptions||[]).filter(x=>QUOTE_LEVEL_KINDS.indexOf(x.kind) >= 0);
+  if(!terms.length) return '';
+  const bySup = {};
+  terms.forEach(t=>{
+    (t.suppliers||['(unstated)']).forEach(n=>{
+      if(!bySup[n]) bySup[n] = [];
+      if(!bySup[n].some(x=>x.kind===t.kind && x.headline===t.headline)) bySup[n].push(t);
+    });
+  });
+  return '<div class="note warn"><b>Before you compare these numbers.</b> These are terms on a whole quote, not on one line, so they change every figure that supplier gave you.'+
+    '<ul style="margin:8px 0 0;padding-left:20px">'+
+    Object.keys(bySup).map(n=>'<li><b>'+esc(n)+'</b>'+
+      '<ul style="margin:4px 0 0;padding-left:18px">'+bySup[n].map(t=>
+        '<li><span class="mm unclear">'+esc(t.kind)+'</span> '+esc(t.headline||'')+
+        (t.ask?('<div class="why">Ask them: '+esc(t.ask)+'</div>'):'')+'</li>').join('')+'</ul></li>').join('')+
+    '</ul></div>';
+}
+// ------------------------------------------------------- price sanity
+// $98, $101 and $3,000 is not a price spread. It is evidence that somebody matched the wrong
+// item, and presenting it as a saving is how an estimator gets hurt. This is arithmetic, not
+// judgement: take the middle price, and anything wildly away from it is called out and kept
+// OUT of the spread until a human says otherwise.
+const OUTLIER_HIGH = 4;      // four times the middle price
+const OUTLIER_LOW  = 0.25;   // or a quarter of it
+function unitPriceOf(o){
+  const u = num(o.unit_price);
+  if(u) return u;
+  const q = num(o.qty), e = num(o.extended_price);
+  return (q && e) ? e / q : 0;
+}
+function median(list){
+  const a = list.slice().sort((x,y)=>x-y);
+  if(!a.length) return 0;
+  const mid = a.length >> 1;
+  return a.length % 2 ? a[mid] : (a[mid-1] + a[mid]) / 2;
+}
+function priceSanity(row){
+  const priced = ((row&&row.suppliers)||[])
+    .filter(o=>o.match==='exact' || o.match==='equivalent' || o.match==='substitution')
+    .map(o=>({ supplier:o.supplier, unit:unitPriceOf(o) }))
+    .filter(o=>o.unit > 0);
+  if(priced.length < 2) return { n:priced.length, mid:priced.length?priced[0].unit:0,
+    outliers:[], clean:priced, comparable:false };
+  const mid = median(priced.map(o=>o.unit));
+  const outliers = [], clean = [];
+  priced.forEach(o=>{
+    const ratio = mid ? o.unit / mid : 1;
+    if(ratio >= OUTLIER_HIGH || ratio <= OUTLIER_LOW){
+      outliers.push({ supplier:o.supplier, unit:o.unit, ratio:ratio,
+        why: ratio >= OUTLIER_HIGH
+          ? (Math.round(ratio*10)/10)+' times the other prices on this line'
+          : (Math.round((1/ratio)*10)/10)+' times below the other prices on this line' });
+    } else clean.push(o);
+  });
+  return { n:priced.length, mid:mid, outliers:outliers, clean:clean, comparable: clean.length >= 2 };
+}
+// The honest headline for a row: the lowest price worth standing behind, and why.
+function lowestComparable(row){
+  const s = priceSanity(row);
+  if(!s.clean.length) return null;
+  const low = s.clean.reduce((a,b)=>a.unit < b.unit ? a : b);
+  return { supplier:low.supplier, unit:low.unit, of:s.clean.length, outliers:s.outliers,
+    why: s.clean.length >= 2
+      ? (s.clean.length+' suppliers priced this within range of each other'+
+         (s.outliers.length?(', and '+s.outliers.length+' did not and '+(s.outliers.length===1?'was':'were')+' left out'):''))
+      : 'only one supplier priced this, so there is nothing to compare it against' };
+}
+// Said on the row itself, not filed away in a separate tab.
+function priceSanityHtml(row){
+  const s = priceSanity(row);
+  if(!s.outliers.length) return '';
+  return '<div class="why" style="color:var(--rust)"><b>Check these are the same item.</b> '+
+    s.outliers.map(o=>esc(o.supplier)+' at '+money(o.unit)+' is '+esc(o.why)).join('; ')+
+    '. Left out of the spread until you say otherwise.</div>';
+}
+// ---------------------------------------------------------------- trade
+// A spec section number IS the trade. CSI numbers divisions, so "23 05 93" is mechanical and
+// "22 11 16" is plumbing, and reading the division off the front is a lookup, not a judgement:
+// it costs nothing and it cannot be wrong. Where there is no section number the answer is
+// "not sure", said out loud, rather than a guess dressed up as a fact.
+const CSI_DIVISIONS = {
+  '21':{ trade:'Fire Suppression', mine:false },
+  '22':{ trade:'Plumbing',          mine:true  },
+  '23':{ trade:'Mechanical / HVAC', mine:false },
+  '25':{ trade:'Building Automation', mine:false },
+  '26':{ trade:'Electrical',        mine:false },
+  '27':{ trade:'Communications',    mine:false },
+  '28':{ trade:'Electronic Safety', mine:false },
+  '31':{ trade:'Earthwork',         mine:false },
+  '32':{ trade:'Site Improvements', mine:false },
+  '33':{ trade:'Site Utilities',    mine:null  },  // shared: site sanitary and water often are ours
+  '15':{ trade:'Mechanical (old 15)', mine:null } // pre-2004 numbering lumped plumbing and HVAC together
+};
+// Pulls a division out of things like "22 11 16", "220500", "Section 23 05 93 - Identification",
+// "DIV 26". Deliberately strict: a bare number in a sentence is not a section reference.
+function csiDivision(src){
+  const t = String(src==null?'':src);
+  let m = t.match(/\b(\d{2})\s?(\d{2})\s?(\d{2,4})\b/);          // 22 11 16 / 221116
+  if(m) return m[1];
+  m = t.match(/\b(?:section|sect\.?|spec|div(?:ision)?\.?)\s*[:#-]?\s*(\d{2})\b/i);
+  if(m) return m[1];
+  return null;
+}
+// Words that give the trade away when there is no section number at all. Kept short on purpose:
+// a long list starts guessing, and a wrong trade label is worse than an honest "not sure".
+const TRADE_WORDS = [
+  [/\b(ductwork|ducts?\b|vav\b|air handl|ahus?\b|rtus?\b|chillers?|cooling towers?|condens(?:er|ing) units?|fan coils?|diffusers?|louvers?|refrigerant|hydronic|boilers?|vrf\b)/i, 'Mechanical / HVAC', false],
+  [/\b(panelboards?|switchgear|conduits?|luminaires?|lighting fixtures?|receptacles?|feeders?|transformers?|breakers?|raceways?|branch circuits?)\b/i, 'Electrical', false],
+  [/\b(sprinkler heads?|fire pumps?|standpipes?|wet pipe|dry pipe|fire department connections?|fdc\b)/i, 'Fire Suppression', false],
+  [/\b(water closets?|lavator(?:y|ies)|urinals?|sinks?|faucets?|flush valves?|flushometers?|floor drains?|cleanouts?|p-?traps?|water heaters?|grease interceptors?|backflow preventers?|hose bibbs?|wall hydrants?|vent through roof|sanitary|domestic water|storm drains?)\b/i, 'Plumbing', true]
+];
+// One requirement in, one trade out, with the reason it decided. Never silent.
+function tradeOf(req){
+  const src = (req && (req.source || req.topic)) || '';
+  const div = csiDivision(src);
+  if(div && CSI_DIVISIONS[div]){
+    const d = CSI_DIVISIONS[div];
+    return { trade:d.trade, mine:d.mine, sure: d.mine !== null,
+             why:'spec section '+src.trim()+' is division '+div };
+  }
+  const text = [req && req.requirement, req && req.detail, src].filter(Boolean).join(' ');
+  for(const [re, trade, mine] of TRADE_WORDS){
+    const m = text.match(re);
+    if(m) return { trade:trade, mine:mine, sure:false, why:'no section number; reads as '+trade.toLowerCase()+' from the word "'+m[0]+'"' };
+  }
+  return { trade:'Not sure', mine:null, sure:false,
+           why: src ? ('no division number in "'+String(src).trim().slice(0,40)+'" and nothing in the wording settles it')
+                    : 'no spec section recorded and nothing in the wording settles it' };
+}
+// Counts across whatever requirement list is in play, for the panel on tab 3.
+function tradeBreakdown(list){
+  const out = {};
+  (list||[]).forEach(r=>{
+    const t = tradeOf(r);
+    const k = t.trade;
+    if(!out[k]) out[k] = { trade:k, mine:t.mine, n:0, bySection:0, byWords:0, sample:[] };
+    out[k].n++;
+    if(/^spec section/.test(t.why)) out[k].bySection++; else out[k].byWords++;
+    if(out[k].sample.length < 3) out[k].sample.push({ req:r.requirement, why:t.why });
+  });
+  return Object.keys(out).map(k=>out[k]).sort((a,b)=>b.n-a.n);
 }
 function neededCategories(){
   const per = {};
@@ -3715,7 +4025,7 @@ function renderCompare(){
   const run = cmpData._run || {};
   const cov = sum.coverage || {};
 
-  let html = takeoffStaleBanner();
+  let html = takeoffStaleBanner() + quoteTermsHtml();
   if(run.status === 'incomplete' && !(run.failed||[]).length){
     html += '<div class="note err"><b>This run never reached the end.</b> It is what was saved as it went, from a run that was interrupted rather than one that failed. '+
       ((run.done||[]).length)+' categor'+((run.done||[]).length===1?'y':'ies')+' and '+(((cmpData.coverage&&cmpData.coverage.checks)||[]).length)+
@@ -3902,6 +4212,7 @@ function renderCompare(){
             (r.required_source==='quotes only' ? '<div class="itemsub" style="color:var(--rust)">not on the takeoff at all</div>' : '')+
             (r.spec_model && r.allows_equal===false ? '<div class="itemsub" style="color:var(--rust)">no approved equal permitted</div>' : '')+
             ((r.issues||[]).length ? '<div class="why" style="color:var(--rust)">'+esc(r.issues.join(' · '))+'</div>' : '')+
+            priceSanityHtml(r)+
           '</td>'+cells+'</tr>';
         }).join('')+'</tbody></table></div></div></div>';
     });
@@ -4078,6 +4389,23 @@ function buildBuySheet(){
       return o;
     });
 
+    // A price wildly out of line with the others is evidence of a bad match, not a bargain, and
+    // it must not reach the buy sheet as either a low or a high. Blocked here, with the reason
+    // said out loud, so the spread is between numbers that are actually about the same thing.
+    let pricedAll = offers.filter(o=>o.price !== null);
+    if(pricedAll.length >= 2){
+      const mid = median(pricedAll.map(o=>o.price));
+      pricedAll.forEach(o=>{
+        const ratio = mid ? o.price / mid : 1;
+        if(ratio >= OUTLIER_HIGH || ratio <= OUTLIER_LOW){
+          o.outlier = true;
+          o.blocked.push(ratio >= OUTLIER_HIGH
+            ? ('this price is '+(Math.round(ratio*10)/10)+' times the others on this line, so it is probably not the same item')
+            : ('this price is '+(Math.round((1/ratio)*10)/10)+' times below the others on this line, so it is probably not the same item'));
+          o.price = null;
+        }
+      });
+    }
     const priced = offers.filter(o=>o.price !== null);
     const quotedButBlocked = offers.filter(o=>o.price === null && o.match !== 'missing');
     let state, blockers = [];
@@ -4174,6 +4502,109 @@ function qtyCellHtml(o, l){
   if(o.qty_state === 'over') return '<span class="qchk over">'+esc(q)+'<br>over by '+o.qty_delta+'</span>';
   if(o.qty_state === 'units differ') return '<span class="qchk bad">'+esc(q)+'<br>units differ, not compared</span>';
   return '<span class="qchk bad">'+esc(q)+'<br>'+esc(o.qty_state)+'</span>';
+}
+// ------------------------------------------------------------- RFQ
+// The other half of the buy sheet. A line is here because no price on it can be stood behind:
+// nobody quoted it, or what was quoted could not be compared. Built entirely from what is
+// already on screen - a filter and a sort, nothing asked of the AI, nothing charged.
+let rfqPicked = {};      // takeoff line -> ticked
+function rfqKeyOf(l){ return reqKey((l.takeoff_line || l.item || '') + '|' + (l.category||'')); }
+function buildRfq(){
+  const bs = buildBuySheet();
+  if(!bs) return null;
+  const lines = (bs.lines||[]).filter(l=>l.state === 'nobody' || l.state === 'not_comparable');
+  lines.forEach(l=>{
+    const k = rfqKeyOf(l);
+    if(!(k in rfqPicked)) rfqPicked[k] = true;      // everything unpriced starts ticked
+  });
+  const byCat = {};
+  lines.forEach(l=>{ const c = l.category || 'Other'; (byCat[c] = byCat[c] || []).push(l); });
+  return { lines, byCat,
+    nobody: lines.filter(l=>l.state==='nobody').length,
+    blocked: lines.filter(l=>l.state==='not_comparable').length };
+}
+function rfqSelectAll(on){
+  const r = buildRfq(); if(!r) return;
+  r.lines.forEach(l=>{ rfqPicked[rfqKeyOf(l)] = !!on; });
+  renderRfq();
+}
+function rfqToggle(k, on){ rfqPicked[k] = !!on; renderRfqCount(); }
+function rfqSelected(){
+  const r = buildRfq();
+  return r ? r.lines.filter(l=>rfqPicked[rfqKeyOf(l)]) : [];
+}
+function renderRfqCount(){
+  const el = document.getElementById('rfqMsg');
+  if(!el) return;
+  const n = rfqSelected().length;
+  el.textContent = n ? (n + ' line' + (n===1?'':'s') + ' ticked to go out') : 'Nothing ticked.';
+}
+function renderRfq(){
+  const card = document.getElementById('rfqCard'), out = document.getElementById('rfqOut');
+  if(!card || !out) return;
+  const r = buildRfq();
+  if(!r || !r.lines.length){
+    card.style.display = cmpData && (cmpData.rows||[]).length ? 'block' : 'none';
+    out.innerHTML = cmpData && (cmpData.rows||[]).length
+      ? '<div class="note ok" style="margin-top:0"><b>Nothing is waiting on a quote.</b> Every line has a price behind it.</div>' : '';
+    renderRfqCount();
+    return;
+  }
+  card.style.display = 'block';
+  out.innerHTML =
+    '<div class="note warn" style="margin-top:0"><b>' + r.lines.length + ' line' + (r.lines.length===1?' has':'s have') + ' no price to stand behind.</b> ' +
+      r.nobody + ' nobody quoted at all' + (r.blocked ? (', and ' + r.blocked + ' were quoted but could not be compared') : '') + '.</div>' +
+    Object.keys(r.byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
+      const rows = r.byCat[cat];
+      return '<div class="grp cmp-sec">' + HEAD + '<span class="t">' + esc(cat) + '</span>' +
+        '<span class="c">' + rows.length + ' line' + (rows.length===1?'':'s') + '</span></div>' +
+        '<div class="collapsible-body" style="display:block">' +
+        '<div class="tablewrap"><table class="matrix"><thead><tr>' +
+        '<th style="width:44px"></th><th style="min-width:260px">Item</th><th style="width:120px">Quantity</th>' +
+        '<th style="width:150px">Why it is here</th><th>What we know</th></tr></thead><tbody>' +
+        rows.map(l=>{
+          const k = rfqKeyOf(l);
+          return '<tr><td><input type="checkbox" ' + (rfqPicked[k] ? 'checked' : '') +
+              ' onchange="rfqToggle(' + JSON.stringify(k).replace(/"/g,'&quot;') + ', this.checked)"></td>' +
+            '<td><div class="itemdesc">' + esc(l.takeoff_line || l.item || '') + '</div>' +
+              (l.spec_model ? '<div class="itemsub">' + esc(l.spec_model) + '</div>' : '') + '</td>' +
+            '<td class="qtybox">' + (l.required_qty ? esc(String(l.required_qty)) : '') + ' ' + esc(l.required_uom || '') + '</td>' +
+            '<td>' + (l.state === 'nobody'
+                ? '<span class="mm miss">NOBODY QUOTED</span>'
+                : '<span class="mm unclear">NOT COMPARABLE</span>') + '</td>' +
+            '<td class="why">' + esc((l.blockers || []).join('; ') || 'no supplier had a line for this') + '</td></tr>';
+        }).join('') + '</tbody></table></div></div></div>';
+    }).join('');
+  renderRfqCount();
+}
+// Out as a spreadsheet an estimator can put straight in front of a supply house.
+function downloadRfq(){
+  const picked = rfqSelected();
+  const msg = document.getElementById('rfqMsg');
+  if(!picked.length){ if(msg) msg.textContent = 'Tick at least one line first.'; return; }
+  if(typeof XLSX === 'undefined'){ if(msg) msg.textContent = 'The spreadsheet library did not load. Reload the page.'; return; }
+  const job = projectName() || 'this job';
+  const head = [
+    ['REQUEST FOR QUOTATION'],
+    ['Job', job],
+    ['Prepared', new Date().toLocaleDateString()],
+    ['Lines', picked.length],
+    [],
+    ['Please quote the following. Quantities are from our takeoff. Where a model is named, quote that model or state clearly what you are substituting.'],
+    [],
+    ['Category','Item','Quantity','Unit','Specified model','Your price','Your lead time','Notes / substitution']
+  ];
+  const body = picked
+    .slice()
+    .sort((a,b)=>CATEGORIES.indexOf(a.category||'Other') - CATEGORIES.indexOf(b.category||'Other'))
+    .map(l=>[ l.category || 'Other', l.takeoff_line || l.item || '',
+              l.required_qty || '', l.required_uom || '', l.spec_model || '', '', '', '' ]);
+  const ws = XLSX.utils.aoa_to_sheet(head.concat(body));
+  ws['!cols'] = [{wch:20},{wch:52},{wch:12},{wch:8},{wch:22},{wch:14},{wch:14},{wch:30}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'RFQ');
+  XLSX.writeFile(wb, slugify(job) + '-rfq.xlsx');
+  if(msg) msg.textContent = picked.length + ' line' + (picked.length===1?'':'s') + ' written out.';
 }
 function renderBuySheet(){
   if(libIndex.length && !libLoadedAll){ libLoadAll().then(()=>{ libRowCache = {}; renderBuySheet(); }); }
@@ -4295,6 +4726,7 @@ function renderBuySheet(){
     '<button class="btn2" onclick="setPageTab(\'exceptions\')" type="button">Go clear the exceptions</button>'+
   '</div>';
   box.innerHTML = html;
+  renderRfq();
 }
 function downloadBuyExcel(btn){
   const bs = buildBuySheet();
@@ -4938,14 +5370,43 @@ async function libLoadAll(){
   return libIndex.length;
 }
 const LIB_STOP = new Set(['with','and','for','the','w','ea','each','of','to','in','on','per','a','an','or','by','as','no','not']);
+// An estimator writes SAN US 4" and a supply house writes PVC PIPE SCH 40 4 IN SANITARY
+// UNDERSLAB. Same pipe, not one word in common, so a matcher comparing words finds nothing.
+// These are the trade's own abbreviations, so expanding them is a dictionary lookup: free,
+// deterministic, and both sides get expanded the same way. Only unambiguous ones belong here,
+// because a wrong expansion is a wrong match, which is worse than no match.
+const TRADE_ABBREV = {
+  san:'sanitary', sani:'sanitary',
+  us:'underslab', ug:'underground', ab:'aboveground',
+  vtr:'vent through roof', dwv:'drain waste vent',
+  cw:'cold water', hw:'hot water', hwr:'hot water return', tw:'tempered water',
+  wc:'water closet', lav:'lavatory', ur:'urinal', ss:'service sink', ms:'mop sink',
+  fd:'floor drain', fs:'floor sink', rd:'roof drain', co:'cleanout', fco:'floor cleanout',
+  wco:'wall cleanout', bfp:'backflow preventer', hb:'hose bibb', wh:'water heater',
+  tp:'trap primer', sch:'schedule', std:'standard', xh:'extra heavy', nh:'no hub',
+  cisp:'cast iron soil pipe', ci:'cast iron',
+  gv:'gate valve', bv:'ball valve', ck:'check valve',
+  fpt:'female pipe thread', mpt:'male pipe thread', ips:'iron pipe size',
+  ftg:'fitting', ell:'elbow', cplg:'coupling', red:'reducer',
+  ins:'insulation', hgr:'hanger', slv:'sleeve'
+};
+function libExpand(tok){ return TRADE_ABBREV[tok] || tok; }
 function libTokens(t){
-  return String(t==null?'':t).toLowerCase()
+  const raw = String(t==null?'':t).toLowerCase()
     .replace(/[^a-z0-9./"'-]+/g,' ')
     .split(/\s+/)
     .map(w=>w.replace(/^[-'".]+|[-'".]+$/g,''))
-    // A bare digit is kept on purpose. In plumbing the single most identifying token on a line
-    // is often the size, and 2 in `2" copper` was being thrown away for being one character.
-    .filter(w=>(w.length>1 || /\d/.test(w)) && !LIB_STOP.has(w));
+    .filter(Boolean);
+  // A bare digit is kept on purpose. In plumbing the single most identifying token on a line
+  // is often the size, and 2 in `2" copper` was being thrown away for being one character.
+  const keep = w => (w.length>1 || /\d/.test(w)) && !LIB_STOP.has(w);
+  const out = [];
+  raw.forEach(w=>{
+    const exp = libExpand(w);
+    if(exp !== w){ exp.split(' ').forEach(x=>{ if(keep(x)) out.push(x); }); return; }
+    if(keep(w)) out.push(w);
+  });
+  return out;
 }
 // Not all numbers are equal. "2234.001" identifies one product; "4" is on a third of the price
 // list. Weighting every digit token the same made a shared pipe size enough to call VTR 4in a
@@ -5175,8 +5636,31 @@ function askPayload(){
     takeoff: takeoffData ? { version: takeoffData.version, read_at: takeoffData.at, items: takeoffData.items } : null,
     scheduled_items: (specBasis&&specBasis.items) || [],
     bid_requirements: bidReq ? { findings: bidReq.findings, kickoff_points: bidReq.kickoff_points } : null,
-    comparison: cmpData ? { rows: cmpData.rows, exceptions: cmpData.exceptions, coverage: cmpData.coverage } : null
+    comparison: cmpData ? { rows: cmpData.rows, exceptions: cmpData.exceptions, coverage: cmpData.coverage } : null,
+    // The library was invisible here, so "what is our price on SAN US 4 inch" came back as
+    // "not loaded" while the answer sat on the Library tab. The whole sheet is far too big to
+    // send, so what goes is the matched row for each takeoff line, which is the part that can
+    // answer a question about this job.
+    library: libraryLookupForAsk()
   };
+}
+// One entry per takeoff line that found something in the price list, plus an honest note about
+// what was left out, so an answer can say "not in your library" and mean it.
+function libraryLookupForAsk(){
+  if(!libIndex.length) return { loaded:false, note:'No price list has been loaded into the Library tab on this computer.' };
+  const total = libIndex.reduce((a,x)=>a+x.rows,0);
+  if(!libLoadedAll) return { loaded:true, rows_held:total, matches:[],
+    note:'A price list of '+total+' rows is loaded but has not been searched yet on this page. Say so rather than answering that an item is not in the library.' };
+  const items = (takeoffData && takeoffData.items) || [];
+  const matches = [];
+  items.forEach(it=>{
+    const m = libBestMatch([it.description, [it.manufacturer,it.model].filter(Boolean).join(' ')].filter(Boolean).join(' '));
+    if(m) matches.push({ takeoff_line: it.description, library_description: m.description,
+      part: m.part||'', price: m.price||0, uom: m.uom||'', confidence: m.confidence, matched_because: m.why });
+  });
+  return { loaded:true, rows_held:total, sheets:libIndex.map(x=>x.name), matches:matches,
+    note:'These are this job\'s takeoff lines looked up in the price list held on this computer. '+
+      matches.length+' of '+items.length+' takeoff lines found something. A line missing from this list means nothing in the price list looked like it, not that the price list is unavailable. These are our own costs, not an offer from any supplier.' };
 }
 async function runAsk(){
   const key = getKey();
@@ -5249,7 +5733,15 @@ renderToOut();
 renderReqOut();
 updateCounts();
 // The library belongs to the machine, not to any project, so it loads on its own at startup.
-libRefreshIndex().then(()=>{ renderLibrary(); updateCounts(); });
+libRefreshIndex().then(async ()=>{
+  renderLibrary(); updateCounts();
+  // A new computer, or a browser that has been cleared, should not silently have no price list.
+  // If nothing is held here but the database has one, bring it down without being asked.
+  if(!libIndex.length && workerUrl()){
+    const n = await libPullFromCloud(null, true);
+    if(n) renderLibrary(), updateCounts();
+  }
+});
 // Reopen whatever job was last open, without being asked. Reading the project back is a single
 // cheap GET against the Worker and costs nothing with Anthropic, and coming back to a half
 // empty screen you then have to go and re-populate by hand is its own kind of error.
