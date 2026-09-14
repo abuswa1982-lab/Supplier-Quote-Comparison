@@ -470,7 +470,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B21</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B25</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -619,6 +619,11 @@
       <b>Two halves of one question: for every line, is there a price worth standing behind?</b> Where there is, it is on the buy sheet with the reason it can be trusted. Where there is not, it drops into the RFQ list to go back out for quoting. Nothing on this tab is asked of the AI: every figure is arithmetic done in the browser from what is already on screen, so you can check any of it by hand.
     </div>
     <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 5.</p></div>
+    <div class="card" id="buyListCard" style="display:none">
+      <h2>What we can buy</h2>
+      <p class="hint" style="margin:0 0 10px">Every line with a price behind it, from a supplier or from your own price list. Prices sit side by side and nothing is recommended &mdash; you decide where to buy. If a price here is one you would not stand behind, move that line to the RFQ and it goes out for quoting instead.</p>
+      <div id="buyListOut"></div>
+    </div>
     <div id="buyResults"></div>
     <div class="card" id="rfqCard" style="display:none">
       <h2>Still needs a quote</h2>
@@ -920,6 +925,42 @@ async function loadProjectRows(project){
   const latest = {};
   rows.forEach(r=>{ if(!latest[r.phase]) latest[r.phase] = r; });
   return latest;
+}
+// The shorthand is small and it is the most valuable thing here: a price list can be
+// downloaded again, this cannot. So it is held in three places - memory, this browser, and the
+// database - and it is fetched at startup regardless of whether the rows happen to be cached
+// locally. It used to ride along inside the library download, which meant that on a computer
+// that already had the rows it was silently never loaded, and every reload looked like the
+// teaching had been forgotten.
+const LIB_VOCAB_LS = 'modonix_lib_vocab';
+function libSaveVocabLocal(){
+  try{ localStorage.setItem(LIB_VOCAB_LS, JSON.stringify({ vocab: LIB_VOCAB, meta: libVocabMeta })); }
+  catch(e){ /* a full or blocked store must never break matching */ }
+}
+function libLoadVocabLocal(){
+  try{
+    const raw = localStorage.getItem(LIB_VOCAB_LS);
+    if(!raw) return false;
+    const v = JSON.parse(raw);
+    libApplyVocab(v.vocab||{});
+    libVocabMeta = v.meta || null;
+    return Object.keys(LIB_VOCAB).length > 0;
+  }catch(e){ return false; }
+}
+// Straight from the database, whatever else is or is not on this computer.
+async function libFetchVocab(){
+  if(!workerUrl()) return 0;
+  try{
+    const latest = await loadProjectRows(LIBRARY_PROJECT);
+    if(!latest.lib_vocab) return 0;
+    const v = JSON.parse(latest.lib_vocab.data);
+    // What is stored centrally is what everyone shares; anything typed in here that the
+    // database has not seen is kept rather than thrown away.
+    libApplyVocab(Object.assign({}, LIB_VOCAB, v.vocab||{}));
+    libVocabMeta = v.meta || libVocabMeta;
+    libSaveVocabLocal();
+    return Object.keys(LIB_VOCAB).length;
+  }catch(e){ return 0; }
 }
 function libChunkKey(id, i){ return 'lib_rows:' + id + ':p' + String(i).padStart(6,'0'); }
 // Push every sheet up. Rows go in chunks; the manifest carries the column mapping, which is the
@@ -4455,6 +4496,17 @@ function buildBuySheet(){
     else if(quotedButBlocked.length) { state = 'not_comparable'; blockers = Array.from(new Set(quotedButBlocked.flatMap(o=>o.blocked))); }
     else state = 'nobody';
 
+    // Your own price list is a price. If the library has this item at a real price then you know
+    // what it costs and where it comes from, so the line does not belong on a list of things
+    // nobody can price. This is what decides which of the two lists it lands on.
+    const lib = libraryColumnActive() ? libraryOffer(row) : null;
+    // Your rule, and it is the right one: if your own price list can price it, you know what it
+    // costs and it does not belong on a list of things nobody can price. A shaky match still
+    // counts - it is shown with its confidence so an unconvincing one is obvious, and one
+    // button moves it to the RFQ if you do not believe it.
+    const libPriced = !!(lib && lib.price > 0);
+    const havePrice = priced.length > 0 || libPriced;
+
     const sorted = priced.slice().sort((a,b)=>a.price-b.price);
     const low = sorted[0] || null, high = sorted[sorted.length-1] || null;
     const spread = (low && high && sorted.length>1) ? (high.price - low.price) : 0;
@@ -4462,6 +4514,8 @@ function buildBuySheet(){
       tag:row.tag||'', spec_model:row.spec_model||'',
       required_qty:reqQty, required_uom:row.required_uom||'', required_source:row.required_source||'',
       offers, state, blockers, low, high, spread,
+      lib, libPriced, havePrice,
+      trade: rowTrade(row), source: rowSource(row), _row: row,
       spread_pct: (low && spread) ? (spread/low.price*100) : 0 };
   });
 
@@ -4548,21 +4602,48 @@ function qtyCellHtml(o, l){
 // The other half of the buy sheet. A line is here because no price on it can be stood behind:
 // nobody quoted it, or what was quoted could not be compared. Built entirely from what is
 // already on screen - a filter and a sort, nothing asked of the AI, nothing charged.
-let rfqPicked = {};      // takeoff line -> ticked
+let rfqPicked = {};      // line -> ticked to go out on the RFQ
 function rfqKeyOf(l){ return reqKey((l.takeoff_line || l.item || '') + '|' + (l.category||'')); }
+// A line a person has pushed the other way. Kept with the comparison so it survives a reload
+// and comes back on any computer: it is a decision, not a preference.
+function manualMoves(){
+  if(!cmpData) return {};
+  cmpData._moved = cmpData._moved || {};
+  return cmpData._moved;
+}
+function moveLine(key, where){
+  const m = manualMoves();
+  if(where === 'auto') delete m[key]; else m[key] = where;
+  saveToCloud('p2_comparison', cmpData);
+  renderBuySheet();
+}
+// Which list a line belongs on. The rule is yours: a price we can stand behind - from a
+// supplier or from your own library - means we know what to do with it. Nothing anywhere means
+// it has to go back out for quoting. And a person can overrule either way.
+function lineList(l){
+  const m = manualMoves()[rfqKeyOf(l)];
+  if(m === 'rfq' || m === 'buy') return m;
+  return l.havePrice ? 'buy' : 'rfq';
+}
+// Plain words. "Not comparable" told nobody anything.
+function whyNoPrice(l){
+  if(l.state === 'nobody') return 'Nobody quoted it, and it is not in your price list.';
+  if(l.blockers && l.blockers.length){
+    return 'It was quoted, but the price cannot be used as it stands: ' + l.blockers.join('; ') + '.';
+  }
+  return 'No price anybody will stand behind.';
+}
 function buildRfq(){
   const bs = buildBuySheet();
   if(!bs) return null;
-  const lines = (bs.lines||[]).filter(l=>l.state === 'nobody' || l.state === 'not_comparable');
-  lines.forEach(l=>{
-    const k = rfqKeyOf(l);
-    if(!(k in rfqPicked)) rfqPicked[k] = true;      // everything unpriced starts ticked
-  });
+  const lines = (bs.lines||[]).filter(l=>lineList(l) === 'rfq');
+  lines.forEach(l=>{ const k = rfqKeyOf(l); if(!(k in rfqPicked)) rfqPicked[k] = true; });
   const byCat = {};
   lines.forEach(l=>{ const c = l.category || 'Other'; (byCat[c] = byCat[c] || []).push(l); });
-  return { lines, byCat,
+  return { lines, byCat, all: bs.lines||[],
     nobody: lines.filter(l=>l.state==='nobody').length,
-    blocked: lines.filter(l=>l.state==='not_comparable').length };
+    blocked: lines.filter(l=>l.state!=='nobody').length,
+    movedHere: lines.filter(l=>manualMoves()[rfqKeyOf(l)]==='rfq').length };
 }
 function rfqSelectAll(on){
   const r = buildRfq(); if(!r) return;
@@ -4580,43 +4661,114 @@ function renderRfqCount(){
   const n = rfqSelected().length;
   el.textContent = n ? (n + ' line' + (n===1?'':'s') + ' ticked to go out') : 'Nothing ticked.';
 }
+function tradeChip(t){
+  const cls = t.mine === true ? 'exact' : t.mine === false ? 'miss' : 'unclear';
+  return '<span class="mm '+cls+'">'+esc(t.trade)+'</span>' +
+    (t.mine === false ? '<div class="why" style="color:var(--rust)">not your scope on the face of it</div>' : '');
+}
 function renderRfq(){
   const card = document.getElementById('rfqCard'), out = document.getElementById('rfqOut');
   if(!card || !out) return;
   const r = buildRfq();
-  if(!r || !r.lines.length){
-    card.style.display = cmpData && (cmpData.rows||[]).length ? 'block' : 'none';
-    out.innerHTML = cmpData && (cmpData.rows||[]).length
-      ? '<div class="note ok" style="margin-top:0"><b>Nothing is waiting on a quote.</b> Every line has a price behind it.</div>' : '';
-    renderRfqCount();
-    return;
-  }
+  if(!r){ card.style.display='none'; return; }
   card.style.display = 'block';
+  if(!r.lines.length){
+    out.innerHTML = '<div class="note ok" style="margin-top:0"><b>Nothing is waiting on a quote.</b> Every line has a price behind it, from a supplier or from your own library.</div>';
+    renderRfqCount(); return;
+  }
   out.innerHTML =
-    '<div class="note warn" style="margin-top:0"><b>' + r.lines.length + ' line' + (r.lines.length===1?' has':'s have') + ' no price to stand behind.</b> ' +
-      r.nobody + ' nobody quoted at all' + (r.blocked ? (', and ' + r.blocked + ' were quoted but could not be compared') : '') + '.</div>' +
+    '<div class="note warn" style="margin-top:0"><b>'+r.lines.length+' line'+(r.lines.length===1?' has':'s have')+' no price anywhere.</b> '+
+      r.nobody+' nobody quoted and your library does not have'+(r.nobody===1?' it':' them')+
+      (r.blocked ? (', and '+r.blocked+' were quoted but the price cannot be used as it stands') : '')+
+      (r.movedHere ? ('. '+r.movedHere+' of these you moved here yourself.') : '.')+
+      ' Anything your library can price is on the buy sheet above, not here.</div>'+
     Object.keys(r.byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
       const rows = r.byCat[cat];
-      return '<div class="grp cmp-sec">' + HEAD + '<span class="t">' + esc(cat) + '</span>' +
-        '<span class="c">' + rows.length + ' line' + (rows.length===1?'':'s') + '</span></div>' +
-        '<div class="collapsible-body" style="display:block">' +
-        '<div class="tablewrap"><table class="matrix"><thead><tr>' +
-        '<th style="width:44px"></th><th style="min-width:260px">Item</th><th style="width:120px">Quantity</th>' +
-        '<th style="width:150px">Why it is here</th><th>What we know</th></tr></thead><tbody>' +
+      return '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
+        '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+'</span></div>'+
+        '<div class="collapsible-body" style="display:block">'+
+        '<div class="tablewrap"><table class="matrix"><thead><tr>'+
+        '<th style="width:44px">Send</th><th style="min-width:240px">Item</th><th style="width:110px">Quantity</th>'+
+        '<th style="width:150px">Trade</th><th style="min-width:230px">Why it is here</th>'+
+        '<th style="width:120px"></th></tr></thead><tbody>'+
         rows.map(l=>{
           const k = rfqKeyOf(l);
-          return '<tr><td><input type="checkbox" ' + (rfqPicked[k] ? 'checked' : '') +
-              ' onchange="rfqToggle(' + JSON.stringify(k).replace(/"/g,'&quot;') + ', this.checked)"></td>' +
-            '<td><div class="itemdesc">' + esc(l.takeoff_line || l.item || '') + '</div>' +
-              (l.spec_model ? '<div class="itemsub">' + esc(l.spec_model) + '</div>' : '') + '</td>' +
-            '<td class="qtybox">' + (l.required_qty ? esc(String(l.required_qty)) : '') + ' ' + esc(l.required_uom || '') + '</td>' +
-            '<td>' + (l.state === 'nobody'
-                ? '<span class="mm miss">NOBODY QUOTED</span>'
-                : '<span class="mm unclear">NOT COMPARABLE</span>') + '</td>' +
-            '<td class="why">' + esc((l.blockers || []).join('; ') || 'no supplier had a line for this') + '</td></tr>';
-        }).join('') + '</tbody></table></div></div></div>';
+          const moved = manualMoves()[k] === 'rfq';
+          return '<tr><td><input type="checkbox" '+(rfqPicked[k]?'checked':'')+
+              ' onchange="rfqToggle('+JSON.stringify(k).replace(/"/g,'&quot;')+', this.checked)"></td>'+
+            '<td><div class="itemdesc">'+esc(l.takeoff_line || l.item || '')+'</div>'+
+              (l.spec_model?'<div class="itemsub">'+esc(l.spec_model)+'</div>':'')+
+              '<div class="itemsub">'+esc(l.source ? l.source.label : '')+'</div></td>'+
+            '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
+            '<td>'+tradeChip(l.trade)+'</td>'+
+            '<td class="why">'+esc(whyNoPrice(l))+
+              (l.lib ? ('<div style="margin-top:4px">Closest thing in your library: '+esc(String(l.lib.description).slice(0,60))+
+                        ' &mdash; '+esc(l.lib.confidence)+' confidence, so it is not being relied on.</div>') : '')+'</td>'+
+            '<td>'+(moved
+              ? '<button class="btn2" type="button" onclick="moveLine('+JSON.stringify(k).replace(/"/g,'&quot;')+', \'auto\')">Put it back</button>'
+              : '<button class="btn2" type="button" onclick="moveLine('+JSON.stringify(k).replace(/"/g,'&quot;')+', \'buy\')">Move to buy sheet</button>')+'</td></tr>';
+        }).join('')+'</tbody></table></div></div></div>';
     }).join('');
   renderRfqCount();
+}
+// What can be bought: every line with a price somebody will stand behind, from a supplier or
+// from your own library. No recommendation is made here. The prices are laid out and a person
+// decides - the tool has no business telling an estimator where to buy.
+function renderBuyList(){
+  const out = document.getElementById('buyListOut');
+  if(!out) return;
+  const bs = buildBuySheet();
+  if(!bs){ out.innerHTML = ''; return; }
+  const lines = (bs.lines||[]).filter(l=>lineList(l) === 'buy');
+  if(!lines.length){
+    out.innerHTML = '<div class="note warn" style="margin-top:12px"><b>Nothing has a price behind it yet.</b> Everything is on the RFQ list below.</div>';
+    return;
+  }
+  const names = bs.names || [];
+  const fromLib = lines.filter(l=>!l.offers.some(o=>o.price!==null) && l.libPriced).length;
+  const byCat = {};
+  lines.forEach(l=>{ (byCat[l.category||'Other'] = byCat[l.category||'Other'] || []).push(l); });
+  out.innerHTML =
+    '<div class="note ok" style="margin-top:12px"><b>'+lines.length+' line'+(lines.length===1?'':'s')+' can be bought.</b> '+
+      (fromLib ? (fromLib+' of them '+(fromLib===1?'has':'have')+' no supplier price and '+(fromLib===1?'is':'are')+' priced from your own library, which is what you pay, not an offer from anybody. ') : '')+
+      'No winner is picked here: the prices are side by side and the call is yours.</div>'+
+    Object.keys(byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
+      const rows = byCat[cat];
+      return '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
+        '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+'</span></div>'+
+        '<div class="collapsible-body" style="display:block">'+
+        '<div class="tablewrap"><table class="matrix"><thead><tr>'+
+        '<th style="min-width:230px">Item</th><th style="width:105px">Quantity</th><th style="width:140px">Trade</th>'+
+        names.map(n=>'<th class="supcol" style="width:130px">'+esc(n)+'</th>').join('')+
+        '<th class="supcol libcol" style="width:140px">Your library</th>'+
+        '<th style="width:120px"></th></tr></thead><tbody>'+
+        rows.map(l=>{
+          const k = rfqKeyOf(l);
+          const moved = manualMoves()[k] === 'buy';
+          return '<tr'+(moved?' class="hasissue"':'')+'>'+
+            '<td><div class="itemdesc">'+esc(l.takeoff_line || l.item || '')+'</div>'+
+              (l.spec_model?'<div class="itemsub">'+esc(l.spec_model)+'</div>':'')+
+              (moved?'<div class="why">you moved this here</div>':'')+'</td>'+
+            '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
+            '<td>'+tradeChip(l.trade)+'</td>'+
+            names.map(n=>{
+              const o = l.offers.find(x=>x.supplier===n);
+              if(!o || o.price === null) return '<td class="supcell"><span class="mm miss">'+
+                (o && o.match!=='missing' ? 'CANNOT USE' : 'NOT QUOTED')+'</span>'+
+                (o && o.blocked && o.blocked.length ? '<div class="why">'+esc(o.blocked[0])+'</div>' : '')+'</td>';
+              return '<td class="supcell"><div class="pricebox">'+money(o.price)+'</div>'+
+                '<div class="why">'+esc(o.price_note||'')+'</div></td>';
+            }).join('')+
+            '<td class="supcell libcell">'+(l.libPriced
+              ? '<div class="pricebox">'+money(l.lib.price * (l.required_qty||1))+'</div>'+
+                '<div class="why">'+money(l.lib.price)+(l.lib.uom?(' / '+esc(l.lib.uom)):'')+' &mdash; your cost, not an offer</div>'+
+                '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
+                  esc(l.lib.confidence)+' match</span> '+esc(String(l.lib.description).slice(0,44))+'</div>'
+              : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>'+
+            '<td><button class="btn2" type="button" onclick="moveLine('+JSON.stringify(k).replace(/"/g,'&quot;')+', '+
+              (moved?'\'auto\'':'\'rfq\'')+')">'+(moved?'Put it back':'Move to RFQ')+'</button></td></tr>';
+        }).join('')+'</tbody></table></div></div></div>';
+    }).join('');
 }
 // Out as a spreadsheet an estimator can put straight in front of a supply house.
 function downloadRfq(){
@@ -4767,6 +4919,9 @@ function renderBuySheet(){
     '<button class="btn2" onclick="setPageTab(\'exceptions\')" type="button">Go clear the exceptions</button>'+
   '</div>';
   box.innerHTML = html;
+  const blc = document.getElementById('buyListCard');
+  if(blc) blc.style.display = (cmpData && (cmpData.rows||[]).length) ? 'block' : 'none';
+  renderBuyList();
   renderRfq();
 }
 function downloadBuyExcel(btn){
@@ -5493,6 +5648,7 @@ async function runLibraryVocab(btn){
     libVocabMeta = { at:new Date().toISOString(), stems:stems.length,
                      learned:Object.keys(learned).length, report:report };
     libApplyVocab(Object.assign({}, LIB_VOCAB, learned));
+    libSaveVocabLocal();
     try{ await saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta }); }
     catch(e){ set('Learned it, but it could not be saved to the database: '+e.message, true); }
     renderLibrary(); renderCompare(); renderBuySheet(); updateCounts();
@@ -5508,13 +5664,26 @@ function renderVocab(){
   const keys = Object.keys(LIB_VOCAB);
   const meta = libVocabMeta || {};
   const report = meta.report || [];
-  const refused = report.filter(r=>r.evidence === 'none' || !String(r.expansion||'').trim());
+  // Anything you have since answered yourself leaves this list. It used to sit in both tables
+  // at once, which reads as though your answer had not been taken.
+  const refused = report.filter(r=>(r.evidence === 'none' || !String(r.expansion||'').trim()) && !LIB_VOCAB[r.stem]);
   if(!keys.length && !refused.length){ out.innerHTML = ''; return; }
   const byStem = {};
   report.forEach(r=>{ byStem[r.stem] = r; });
-  const evBadge = e => e === 'takeoff notes' ? 'exact' : e === 'bid requirements' ? 'equiv' : 'unclear';
+  const evBadge = e => e === 'you' ? 'exact' : e === 'takeoff notes' ? 'exact' : e === 'bid requirements' ? 'equiv' : 'unclear';
+  const evLabel = e => e === 'you' ? 'you decided' : (e || 'yours');
   out.innerHTML =
-    (keys.length ? '<div class="note ok" style="margin-top:12px"><b>'+keys.length+' piece'+(keys.length===1?'':'s')+' of shorthand learned, each one from something on file.</b> '+
+    // Written for whoever ends up reviewing this, who will not have been in any of the
+    // conversations that produced it.
+    ((keys.length || refused.length) ? '<div class="note info" style="margin-top:12px"><b>How to read this screen.</b> '+
+      'Your takeoff is written in shorthand. Your price list is written in product descriptions. They describe the same items in different words, so this is the sheet that joins them, and every line on it was read off a document rather than assumed.'+
+      '<ul style="margin:8px 0 0;padding-left:20px">'+
+      '<li><b>Evidence</b> says where each answer came from. <span class="mm exact">TAKEOFF NOTES</span> means the estimator wrote the material on the line himself. <span class="mm equiv">BID REQUIREMENTS</span> means it came out of the specification, and the words are quoted beside it. <span class="mm exact">YOU DECIDED</span> means a person typed it in.</li>'+
+      '<li><b>Every box is editable.</b> Change one, click away, and it is saved at once &mdash; there is no save button and nothing to confirm. Your version then outranks whatever was read off the document, on this job and on every job after it.</li>'+
+      '<li><b>A blank is a real answer.</b> It means nothing on the takeoff and nothing in the bid documents settles what that item is, or that two of them disagree. Nothing was assumed. Read the reason given, and either fix the takeoff or type the answer in.</li>'+
+      '<li><b>Check the ones that matter to the money first.</b> Hundreds of feet of pipe is worth more of your attention than a single fitting, and a wrong material there is the difference between six dollars a foot and thirty.</li>'+
+      '</ul></div>' : '')+
+    (keys.length ? '<div class="note ok"><b>'+keys.length+' piece'+(keys.length===1?'':'s')+' of shorthand learned, each one from something on file or from you.</b> '+
       'Matching against these costs nothing from here on, on this job and every job after it.</div>' : '')+
     (keys.length ? '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:150px">Your shorthand</th>'+
       '<th style="min-width:230px">What the price list calls it</th><th style="width:130px">Evidence</th>'+
@@ -5523,7 +5692,7 @@ function renderVocab(){
         const r = byStem[k] || {};
         return '<tr><td class="pricebox">'+esc(k)+'</td>'+
           '<td><input value="'+esc(LIB_VOCAB[k])+'" onchange="libEditVocab('+JSON.stringify(k).replace(/"/g,'&quot;')+', this.value)" style="width:100%"></td>'+
-          '<td><span class="mm '+evBadge(r.evidence)+'">'+esc(r.evidence || 'yours')+'</span>'+
+          '<td><span class="mm '+evBadge(r.evidence)+'">'+esc(evLabel(r.evidence))+'</span>'+
             (r.confidence?'<div class="itemsub">'+esc(r.confidence)+' confidence</div>':'')+'</td>'+
           '<td>'+(r.quote?'<div class="itemdesc">&ldquo;'+esc(String(r.quote).slice(0,140))+'&rdquo;</div>':'<div class="itemsub">you typed this in</div>')+
             '<div class="why">'+esc(r.why||'')+'</div></td></tr>';
@@ -5540,8 +5709,22 @@ function renderVocab(){
 }
 function libEditVocab(stem, value){
   const v = Object.assign({}, LIB_VOCAB);
-  if(String(value||'').trim()) v[stem] = String(value).trim().toLowerCase(); else delete v[stem];
+  const typed = String(value||'').trim();
+  if(typed) v[stem] = typed.toLowerCase(); else delete v[stem];
   libApplyVocab(v);
+  // Record that this one came from you. You outrank both the takeoff notes and the spec: you are
+  // the one who has to stand behind the number, and on a conflict you are the only one who can
+  // settle it.
+  libVocabMeta = libVocabMeta || { at:new Date().toISOString(), stems:0, learned:0, report:[] };
+  libVocabMeta.report = libVocabMeta.report || [];
+  const existing = libVocabMeta.report.find(r=>r.stem === stem);
+  const entry = { stem, expansion: typed.toLowerCase(), evidence: typed ? 'you' : 'none',
+                  quote:'', confidence: typed ? 'high' : 'low',
+                  why: typed ? 'you typed this in, and it overrides anything read off a document'
+                             : (existing ? existing.why : 'cleared') };
+  if(existing) Object.assign(existing, entry); else libVocabMeta.report.push(entry);
+  libVocabMeta.at = new Date().toISOString();
+  libSaveVocabLocal();
   saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta }).catch(()=>{});
   renderCompare(); renderBuySheet(); renderLibrary();
 }
@@ -5642,7 +5825,10 @@ function libUnmatchedStems(){
     if(ok) seen[stem].matched++; else seen[stem].unmatched++;
   });
   return Object.keys(seen).map(k=>seen[k])
-    .filter(x=>x.unmatched > 0)
+    // Shorthand that has already been taught is never asked about again, whatever the match
+    // confidence turns out to be. Re-asking spends money on an answer already given, and worse,
+    // it could overwrite a correction typed in by hand - which outranks anything a document says.
+    .filter(x=>x.unmatched > 0 && !LIB_VOCAB[x.stem])
     .sort((a,b)=>b.unmatched-a.unmatched);
 }
 function libApplyVocab(v){
@@ -6022,9 +6208,17 @@ libRefreshIndex().then(async ()=>{
   renderLibrary(); updateCounts();
   // A new computer, or a browser that has been cleared, should not silently have no price list.
   // If nothing is held here but the database has one, bring it down without being asked.
+  // The shorthand comes back first, from this browser, so a reload never looks like amnesia.
+  libLoadVocabLocal();
   if(!libIndex.length && workerUrl()){
     const n = await libPullFromCloud(null, true);
     if(n) renderLibrary(), updateCounts();
+  }
+  // Then from the database, so anything learned on another computer arrives here too. This runs
+  // whether or not the rows were already sitting on this machine.
+  if(workerUrl()){
+    const n = await libFetchVocab();
+    if(n){ libRowCache = {}; renderLibrary(); renderCompare(); renderBuySheet(); updateCounts(); }
   }
 });
 // Reopen whatever job was last open, without being asked. Reading the project back is a single
