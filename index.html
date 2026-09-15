@@ -471,7 +471,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B30</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B31</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -4876,9 +4876,11 @@ function renderRfq(){
             '<td class="why">'+esc(whyNoPrice(l))+
               (l.lib ? ('<div style="margin-top:4px">Closest thing in your library: '+esc(String(l.lib.description).slice(0,60))+
                         ' &mdash; '+esc(l.lib.confidence)+' confidence, so it is not being relied on.</div>') : '')+'</td>'+
+            // Nothing here has a price, so there is nowhere to move it to. The only thing that
+            // belongs on a line waiting for a quote is putting back one you pushed here by hand.
             '<td>'+(moved
               ? '<button class="btn2" type="button" onclick="moveLine('+JSON.stringify(k).replace(/"/g,'&quot;')+', \'auto\')">Put it back</button>'
-              : '<button class="btn2" type="button" onclick="moveLine('+JSON.stringify(k).replace(/"/g,'&quot;')+', \'buy\')">Move to buy sheet</button>')+'</td></tr>';
+              : '')+'</td></tr>';
         }).join('')+'</tbody></table></div></div></div>';
     }).join('');
   renderRfqCount();
@@ -5145,7 +5147,17 @@ function downloadRfq(){
   if(msg) msg.textContent = picked.length + ' line' + (picked.length===1?'':'s') + ' written out.';
 }
 function renderBuySheet(){
-  if(libIndex.length && !libLoadedAll){ libLoadAll().then(()=>{ libRowCache = {}; renderBuySheet(); }); }
+  // The buy/RFQ split asks the price list whether it can price each line. Until that list is in
+  // memory the answer is always no, so an early render puts library-priced lines on the RFQ and
+  // a second render moves them back - which is why the counts were reading 89, then 90, then 93.
+  // Load it first, render once, and the number stands still.
+  if(libIndex.length && !libLoadedAll){
+    const box = document.getElementById('buyListOut');
+    if(box) box.innerHTML = '<div class="note info" style="margin-top:12px">Reading your price list before splitting these, so the counts do not move under you…</div>';
+    libLoadAll().then(()=>{ libRowCache = {}; renderBuySheet(); });
+    return;
+  }
+
   const box = document.getElementById('buyResults');
   const empty = document.getElementById('buyEmpty');
   const bs = buildBuySheet();
