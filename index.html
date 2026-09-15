@@ -471,7 +471,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B31</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B32</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -620,6 +620,15 @@
       <b>Two halves of one question: for every line, is there a price worth standing behind?</b> Where there is, it is on the buy sheet with the reason it can be trusted. Where there is not, it drops into the RFQ list to go back out for quoting. Nothing on this tab is asked of the AI: every figure is arithmetic done in the browser from what is already on screen, so you can check any of it by hand.
     </div>
     <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 5.</p></div>
+    <div class="card" id="healthCard" style="display:none">
+      <h2>How much of this job the quotes actually priced</h2>
+      <p class="hint" style="margin:0 0 10px">Before you read either list: this is where the supplier prices went, and what the buy sheet is resting on. All of it is counted in the browser from the comparison rows &mdash; you can check any figure by hand.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn2 primary" type="button" onclick="downloadHealth()">Download this as Excel</button>
+        <span class="hint" id="healthMsg" style="margin:0"></span>
+      </div>
+      <div id="healthOut"></div>
+    </div>
     <div class="card" id="lookCard" style="display:none">
       <h2>Worth a look first</h2>
       <p class="hint" style="margin:0 0 10px">The places where this tool is least certain, gathered in one spot. Folded shut &mdash; open what you want to check.</p>
@@ -4887,6 +4896,72 @@ function renderRfq(){
 }
 // Worth a look first. Not a fourth list to work through - a short strip at the top saying
 // which lines a person should put their eyes on before trusting any of this, and why. Four
+// ---------------------------------------------------------------------------------------
+// WHY THE QUOTES DID NOT PRICE THE JOB
+// A buy sheet where almost every price comes from our own library is not a buy sheet, it is a
+// warning. This works out where the supplier prices went, in plain arithmetic, from the same
+// data the two lists below are built from. Nothing is asked of the AI and nothing is guessed:
+// every number here can be got at by hand from the comparison rows.
+function quoteHealth(){
+  const bs = buildBuySheet();
+  if(!bs) return null;
+  const lines = bs.lines || [], names = bs.names || [];
+  if(!names.length) return null;
+
+  // Every supplier gets one slot on every line. A slot either carries a price we can stand
+  // next to another price, or it does not, and if it does not there is exactly one reason why.
+  const reasonOf = o => o.match === 'missing'
+    ? 'the supplier never quoted this line'
+    : (o.blocked[0] || 'the line carried no usable price');
+  const reasons = {}, bySup = {};
+  names.forEach(n=>{ bySup[n] = { supplier:n, quoted:0, usable:0, dropped:0, reasons:{} }; });
+  let slots = 0, usable = 0;
+  lines.forEach(l=>{
+    (l.offers||[]).forEach(o=>{
+      slots++;
+      const b = bySup[o.supplier]; if(!b) return;
+      if(o.match !== 'missing') b.quoted++;
+      if(o.price !== null){ usable++; b.usable++; return; }
+      const r = reasonOf(o);
+      reasons[r] = (reasons[r]||0) + 1;
+      b.dropped++; b.reasons[r] = (b.reasons[r]||0) + 1;
+    });
+  });
+
+  const withSupplierPrice = lines.filter(l=>(l.offers||[]).some(o=>o.price !== null)).length;
+  const libOnly = lines.filter(l=>!(l.offers||[]).some(o=>o.price !== null) && l.libPriced);
+  const conf = { high:0, medium:0, low:0 };
+  libOnly.forEach(l=>{ const c = (l.lib && l.lib.confidence) || 'low'; conf[c] = (conf[c]||0) + 1; });
+  const noPriceAtAll = lines.filter(l=>!(l.offers||[]).some(o=>o.price !== null) && !l.libPriced).length;
+
+  return {
+    lines: lines.length, names, slots, usable, dropped: slots - usable,
+    reasons: Object.keys(reasons).map(r=>({ reason:r, n:reasons[r] })).sort((a,b)=>b.n-a.n),
+    bySupplier: names.map(n=>bySup[n]).sort((a,b)=>b.usable-a.usable || a.supplier.localeCompare(b.supplier)),
+    withSupplierPrice, libOnly: libOnly.length, libConf: conf, noPriceAtAll,
+    dupes: duplicateLines()
+  };
+}
+// The same fixture entered twice - once with the sheet it was counted on in front of it, once
+// without - is two lines on the buy sheet, two library matches and twice the money. The page
+// prefix is the only difference, so it is stripped before the two are compared. This is the
+// same prefix rule the library matcher already uses, kept in one place on purpose.
+function dupeStem(text){
+  return String(text==null?'':text).toLowerCase()
+    .replace(/^[a-z]{1,3}\d{2,4}[_\s-]+/,'')
+    .replace(/[^a-z0-9]+/g,' ').trim();
+}
+function duplicateLines(){
+  const bs = buildBuySheet();
+  if(!bs) return [];
+  const by = {};
+  (bs.lines||[]).forEach(l=>{
+    const k = dupeStem(l.takeoff_line || l.item || '') + '|' + (l.category||'');
+    if(!k.trim() || k.charAt(0) === '|') return;
+    (by[k] = by[k] || []).push(l);
+  });
+  return Object.keys(by).filter(k=>by[k].length > 1).map(k=>by[k]);
+}
 // kinds: the trade is not certain, it is plainly another trade's work, the library match is
 // shaky, or the supplier prices disagree so badly they cannot be the same item.
 function needsLookGroups(){
@@ -4900,7 +4975,9 @@ function needsLookGroups(){
     otherTrade:  lines.filter(l=>l.trade && l.trade.mine === false),
     shakyLib:    lines.filter(l=>lineList(l)==='buy' && l.libPriced && l.lib.confidence === 'low'
                                  && !l.offers.some(o=>o.price!==null)),
-    outliers:    lines.filter(l=>priceSanity(l._row).outliers.length)
+    outliers:    lines.filter(l=>priceSanity(l._row).outliers.length),
+    // Both halves of every duplicated pair, because you cannot judge one without seeing the other.
+    dupes:       duplicateLines().reduce((a,g)=>a.concat(g), [])
   };
   // Every flagged line, so the flag can follow it into the buy sheet and the RFQ rather than
   // living only on a panel somebody might never open.
@@ -4913,6 +4990,7 @@ function needsLookGroups(){
   mark(g.otherTrade, 'reads as another trade');
   mark(g.shakyLib, 'weak library match');
   mark(g.outliers, 'prices cannot be the same item');
+  mark(g.dupes, 'this item is on the takeoff more than once');
   // One line flagged for two reasons is still one line to look at.
   g.total = Object.keys(g.keys).length;
   return g;
@@ -4947,6 +5025,157 @@ function lookSelect(kind){
   if(!g || !g[kind] || !g[kind].length) return;
   g[kind].forEach(l=>{ selOf(lineList(l))[rfqKeyOf(l)] = true; });
   keepPlace(renderBuySheet);
+}
+function renderQuoteHealth(){
+  const out = document.getElementById('healthOut');
+  const card = document.getElementById('healthCard');
+  if(!out || !card) return;
+  const h = quoteHealth();
+  if(!h || !h.lines){ card.style.display='none'; out.innerHTML=''; return; }
+  card.style.display = 'block';
+  const pct = (a,b) => b ? Math.round(a/b*100) : 0;
+  const nQuotes = h.names.length;
+  const supplierPct = pct(h.withSupplierPrice, h.lines);
+
+  // The headline is the one number that decides whether any of this is presentable, so it is
+  // said first and in the words an estimator would use, not as a percentage buried in a table.
+  const tone = supplierPct < 25 ? 'err' : supplierPct < 60 ? 'warn' : 'ok';
+  const head =
+    '<div class="note '+tone+'" style="margin-top:0"><b>'+h.withSupplierPrice+' of '+h.lines+
+      ' lines ('+supplierPct+'%) have a price from a supplier.</b> '+
+      (h.libOnly ? ('Another '+h.libOnly+' '+(h.libOnly===1?'is':'are')+' priced only from your own library, which is what the item costs us, not an offer anybody has made. ') : '')+
+      (h.noPriceAtAll ? (h.noPriceAtAll+' '+(h.noPriceAtAll===1?'line has':'lines have')+' no price from anywhere. ') : '')+
+      (supplierPct < 25
+        ? 'At this level the quotes are not pricing the job. That is the thing to fix before any of these numbers go in front of anybody.'
+        : 'Open the sections below to see exactly where the rest went.')+
+    '</div>';
+
+  const sec = (title, count, body) =>
+    '<div class="grp cmp-sec">'+HEADC+'<span class="t">'+esc(title)+'</span>'+
+      '<span class="c">'+esc(count)+' &middot; click to open</span></div>'+
+    '<div class="collapsible-body" style="display:none">'+body+'</div></div>';
+
+  // Where the prices went. One row per reason, biggest first, because the biggest reason is
+  // almost always the whole story and it should not have to be hunted for.
+  const reasonTable =
+    '<div class="note info" style="margin-top:0">Each supplier gets one chance to price each line. '+h.lines+
+      ' line'+(h.lines===1?'':'s')+' &times; '+nQuotes+' quote'+(nQuotes===1?'':'s')+' = <b>'+h.slots+
+      '</b> chances. <b>'+h.usable+'</b> came back with a price we can put next to another price. Here is what happened to the other '+h.dropped+'.</div>'+
+    '<div class="tablewrap"><table class="matrix"><thead><tr>'+
+      '<th style="min-width:340px">What stopped the price being used</th><th style="width:110px">Times</th><th style="width:110px">Share</th>'+
+      '</tr></thead><tbody>'+
+      h.reasons.map(r=>'<tr><td>'+esc(r.reason)+'</td><td class="qtybox">'+r.n+'</td>'+
+        '<td class="qtybox">'+pct(r.n, h.dropped)+'%</td></tr>').join('')+
+      '</tbody></table></div>'+
+    '<p class="hint" style="margin:10px 0 0">&ldquo;The supplier never quoted this line&rdquo; is a scope problem &mdash; they did not offer it. Everything else is a reading problem: they did put something on paper and it could not be tied to the takeoff line safely. Those are the ones worth chasing, because the money is already in the quote.</p>';
+
+  // Supplier by supplier, because "the quotes are bad" is not something you can take to anybody.
+  // "Ferguson priced 40 lines and 36 of them could not be read" is.
+  const supTable =
+    '<div class="tablewrap"><table class="matrix"><thead><tr>'+
+      '<th style="min-width:180px">Supplier</th><th style="width:130px">Lines they quoted</th>'+
+      '<th style="width:130px">Of those, usable</th><th style="width:110px">Dropped</th>'+
+      '<th style="min-width:300px">Biggest reason they were dropped</th></tr></thead><tbody>'+
+      h.bySupplier.map(b=>{
+        const top = Object.keys(b.reasons).sort((x,y)=>b.reasons[y]-b.reasons[x])[0];
+        return '<tr><td><div class="itemdesc">'+esc(b.supplier)+'</div></td>'+
+          '<td class="qtybox">'+b.quoted+'</td>'+
+          '<td class="qtybox">'+b.usable+(b.quoted?(' <span class="itemsub">('+pct(b.usable,b.quoted)+'%)</span>'):'')+'</td>'+
+          '<td class="qtybox">'+b.dropped+'</td>'+
+          '<td class="why">'+(top ? esc(top)+' &times; '+b.reasons[top] : '')+'</td></tr>';
+      }).join('')+
+      '</tbody></table></div>'+
+    '<p class="hint" style="margin:10px 0 0">A supplier who quoted plenty of lines but has almost none usable is not a bad supplier. It means their quote and our takeoff are describing the same material in different words, and nothing has taught this tool the bridge between them yet.</p>';
+
+  // What the buy sheet is standing on. This is the question he actually asked.
+  const c = h.libConf;
+  const standTable =
+    '<div class="tablewrap"><table class="matrix"><thead><tr>'+
+      '<th style="min-width:340px">What is behind the price</th><th style="width:110px">Lines</th><th style="width:110px">Share</th>'+
+      '</tr></thead><tbody>'+
+      '<tr><td>A supplier quoted it and the price can be used</td><td class="qtybox">'+h.withSupplierPrice+'</td><td class="qtybox">'+pct(h.withSupplierPrice,h.lines)+'%</td></tr>'+
+      '<tr><td>Nobody quoted it &mdash; the only price is our own library, matched <b>high</b> confidence</td><td class="qtybox">'+c.high+'</td><td class="qtybox">'+pct(c.high,h.lines)+'%</td></tr>'+
+      '<tr><td>Nobody quoted it &mdash; our own library, <b>medium</b> confidence</td><td class="qtybox">'+c.medium+'</td><td class="qtybox">'+pct(c.medium,h.lines)+'%</td></tr>'+
+      '<tr><td>Nobody quoted it &mdash; our own library, <b>low</b> confidence, which is a guess with a price on it</td><td class="qtybox">'+c.low+'</td><td class="qtybox">'+pct(c.low,h.lines)+'%</td></tr>'+
+      '<tr><td>No price from anywhere &mdash; these are on the RFQ list</td><td class="qtybox">'+h.noPriceAtAll+'</td><td class="qtybox">'+pct(h.noPriceAtAll,h.lines)+'%</td></tr>'+
+      '</tbody></table></div>'+
+    (c.low ? '<div class="note warn" style="margin-bottom:0">'+c.low+' line'+(c.low===1?'':'s')+
+      ' on the buy sheet '+(c.low===1?'carries':'carry')+' a price that came off a weak library match with nothing to check it against. Those are listed one by one under <b>Priced only off a shaky library match</b> below.</div>' : '');
+
+  const dupeCount = h.dupes.reduce((a,g)=>a+g.length, 0);
+  const dupeBody = !h.dupes.length ? '' : sec(
+    'The same item counted more than once', h.dupes.length+' item'+(h.dupes.length===1?'':'s')+', '+dupeCount+' lines',
+    '<div class="note err" style="margin-top:0">These read as the same item once the sheet number is taken off the front. Each copy gets its own price, so the job is being bought twice.</div>'+
+    '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:340px">The lines that read the same</th>'+
+      '<th style="width:110px">Category</th><th style="width:110px">Qty each</th></tr></thead><tbody>'+
+      h.dupes.slice(0,40).map(grp=>'<tr><td>'+grp.map(l=>'<div class="itemdesc">'+esc(l.takeoff_line||l.item||'')+'</div>').join('')+
+        '</td><td>'+esc(grp[0].category||'')+'</td><td class="qtybox">'+
+        grp.map(l=>esc(String(l.required_qty||'')+' '+(l.required_uom||''))).join('<br>')+'</td></tr>').join('')+
+      (h.dupes.length>40 ? '<tr><td colspan="3" class="itemsub">and '+(h.dupes.length-40)+' more</td></tr>' : '')+
+      '</tbody></table></div>');
+
+  out.innerHTML = head +
+    sec('Where the supplier prices went', h.dropped+' of '+h.slots+' dropped', reasonTable) +
+    sec('Supplier by supplier', h.names.length+' quote'+(h.names.length===1?'':'s'), supTable) +
+    sec('What every price on the buy sheet is standing on', h.lines+' lines', standTable) +
+    dupeBody;
+}
+// The same figures as a spreadsheet, because a screenshot of a panel is not something you put
+// in front of a customer or a supply house.
+function downloadHealth(){
+  const msg = document.getElementById('healthMsg');
+  const h = quoteHealth();
+  if(!h){ if(msg) msg.textContent = 'Run the comparison first.'; return; }
+  if(typeof XLSX === 'undefined'){ if(msg) msg.textContent = 'The spreadsheet library did not load. Reload the page.'; return; }
+  const job = projectName() || 'this job';
+  const pct = (a,b) => b ? Math.round(a/b*100)+'%' : '';
+  const wb = XLSX.utils.book_new();
+
+  const a1 = [
+    ['HOW MUCH OF THIS JOB THE QUOTES PRICED'],
+    ['Job', job],
+    ['Prepared', new Date().toLocaleDateString()],
+    [],
+    ['Takeoff lines compared', h.lines],
+    ['Quotes read', h.names.length],
+    ['Chances to price a line (lines x quotes)', h.slots],
+    ['Prices that can be used', h.usable],
+    ['Prices dropped', h.dropped],
+    [],
+    ['Lines with a usable supplier price', h.withSupplierPrice, pct(h.withSupplierPrice, h.lines)],
+    ['Lines priced only from our own library', h.libOnly, pct(h.libOnly, h.lines)],
+    ['   of those, high confidence match', h.libConf.high],
+    ['   of those, medium confidence match', h.libConf.medium],
+    ['   of those, low confidence match', h.libConf.low],
+    ['Lines with no price from anywhere', h.noPriceAtAll, pct(h.noPriceAtAll, h.lines)],
+    [],
+    ['WHERE THE SUPPLIER PRICES WENT'],
+    ['What stopped the price being used','Times','Share of dropped']
+  ].concat(h.reasons.map(r=>[r.reason, r.n, pct(r.n, h.dropped)]));
+  const ws1 = XLSX.utils.aoa_to_sheet(a1);
+  ws1['!cols'] = [{wch:56},{wch:14},{wch:18}];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
+
+  const a2 = [['Supplier','Lines they quoted','Of those, usable','Usable %','Dropped','Biggest reason','Times']]
+    .concat(h.bySupplier.map(b=>{
+      const top = Object.keys(b.reasons).sort((x,y)=>b.reasons[y]-b.reasons[x])[0] || '';
+      return [b.supplier, b.quoted, b.usable, pct(b.usable, b.quoted), b.dropped, top, top ? b.reasons[top] : ''];
+    }));
+  const ws2 = XLSX.utils.aoa_to_sheet(a2);
+  ws2['!cols'] = [{wch:26},{wch:18},{wch:18},{wch:12},{wch:12},{wch:52},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'By supplier');
+
+  if(h.dupes.length){
+    const a3 = [['These lines read as the same item once the sheet number is removed'],[],
+                ['Group','Takeoff line','Category','Qty','Unit']];
+    h.dupes.forEach((grp,i)=>grp.forEach(l=>a3.push([i+1, l.takeoff_line||l.item||'', l.category||'', l.required_qty||'', l.required_uom||''])));
+    const ws3 = XLSX.utils.aoa_to_sheet(a3);
+    ws3['!cols'] = [{wch:8},{wch:52},{wch:20},{wch:10},{wch:8}];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Counted twice');
+  }
+
+  XLSX.writeFile(wb, slugify(job) + '-quote-health.xlsx');
+  if(msg) msg.textContent = 'Written out.';
 }
 function renderNeedsLook(){
   const out = document.getElementById('lookOut');
@@ -4989,7 +5218,8 @@ function renderNeedsLook(){
             esc(l.lib.confidence)+'</span> '+esc(String(l.lib.description).slice(0,36))+'</div>'
           : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>'+
         '<td class="why">'+esc(
-          list === g.outliers ? priceSanity(l._row).outliers.map(o=>o.supplier+' at '+money(o.unit)+', '+o.why).join('; ')
+          list === g.dupes ? ('another takeoff line reads the same once the sheet number is taken off the front')
+          : list === g.outliers ? priceSanity(l._row).outliers.map(o=>o.supplier+' at '+money(o.unit)+', '+o.why).join('; ')
           : list === g.shakyLib ? ('matched "'+String(l.lib.description).slice(0,60)+'" on a low confidence, and that is the only price on this line')
           : (l.trade && l.trade.why) || ''
         )+'</td></tr>').join('')+
@@ -5005,7 +5235,9 @@ function renderNeedsLook(){
     block('Priced only off a shaky library match', 'warn', g.shakyLib, 'What it matched',
       'Nobody quoted these, so the only price is from your own list, and the match itself is weak. A wrong match here puts a wrong price straight on the buy sheet.', 'shakyLib')+
     block('Supplier prices that cannot be the same item', 'err', g.outliers, 'What is out of line',
-      'One supplier is wildly away from the others on the same line. That is evidence of a bad match, not a bargain, and the odd one is already kept out of the numbers.', 'outliers');
+      'One supplier is wildly away from the others on the same line. That is evidence of a bad match, not a bargain, and the odd one is already kept out of the numbers.', 'outliers')+
+    block('The same item is on the takeoff twice', 'err', g.dupes, 'Why these look like the same line',
+      'These read as the same item once the sheet number is taken off the front, for example P101_SK-2 and SK-2. Each one gets its own library match and its own price, so the job is being counted and bought twice. Decide which one is real and send the other out or drop it.', 'dupes');
 }
 // What can be bought: every line with a price somebody will stand behind, from a supplier or
 // from your own library. No recommendation is made here. The prices are laid out and a person
@@ -5281,6 +5513,7 @@ function renderBuySheet(){
   const oldRollup = document.getElementById('buyResults');
   if(oldRollup) oldRollup.style.display = 'none';
   _lookKeys = null;
+  renderQuoteHealth();
   renderNeedsLook();
   renderBuyList();
   renderRfq();
