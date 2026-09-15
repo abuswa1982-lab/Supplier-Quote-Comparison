@@ -471,7 +471,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B28</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B29</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -629,9 +629,10 @@
       <h2>What we can buy</h2>
       <p class="hint" style="margin:0 0 10px">Every line with a price behind it, from a supplier or from your own price list. Prices sit side by side and nothing is recommended &mdash; you decide where to buy. Tick anything you would not stand behind and move it across; it goes out for quoting instead.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn2 primary" type="button" onclick="downloadBuySheet()">Download buy sheet</button>
         <button class="btn2" type="button" onclick="selAll('buy', null, true)">Select all</button>
         <button class="btn2" type="button" onclick="selAll('buy', null, false)">Clear</button>
-        <button class="btn2 primary" type="button" onclick="selMove('buy')">Move selected to RFQ</button>
+        <button class="btn2" type="button" onclick="selMove('buy')">Selected still needs a quote &rarr; RFQ</button>
         <span class="hint" id="buySelMsg" style="margin:0"></span>
       </div>
       <div id="buyListOut"></div>
@@ -1011,11 +1012,31 @@ async function libPushToCloud(btn){
       if(msg) msg.textContent = 'Sending the shorthand…';
       await saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta });
     }
+    // Read it straight back. "It said it saved" is not the same as "it is in there", and this
+    // is the only claim in the tool where being wrong costs a whole re-import.
+    let verified = null;
+    try{
+      const back = await loadProjectRows(LIBRARY_PROJECT);
+      const m2 = back.lib_manifest ? JSON.parse(back.lib_manifest.data) : null;
+      let chunksThere = 0, chunksWanted = 0;
+      (m2 && m2.sheets || []).forEach(sh=>{
+        chunksWanted += sh.chunks;
+        for(let i=0;i<sh.chunks;i++) if(back[libChunkKey(sh.id, i)]) chunksThere++;
+      });
+      verified = { sheets: (m2 && m2.sheets || []).length, chunksThere, chunksWanted };
+    }catch(e){ /* the send itself succeeded; only the read-back failed */ }
+    if(verified && verified.chunksThere < verified.chunksWanted){
+      if(msg){ msg.style.color = '#B4451F';
+        msg.textContent = 'Only ' + verified.chunksThere + ' of ' + verified.chunksWanted +
+          ' parts made it into the database. Try again on a steadier connection before relying on this.'; }
+      return;
+    }
     const total = manifest.sheets.reduce((a,x)=>a+x.rows,0);
     if(msg) msg.textContent = manifest.sheets.length + ' sheet' + (manifest.sheets.length===1?'':'s') +
       ', ' + total.toLocaleString() + ' rows' +
       (vocabN ? (', and ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand') : '') +
-      ', now in the database. It will come back on any computer, on any job.';
+      ', now in the database' + (verified ? ' and read back to check it is really there' : '') +
+      '. It will come back on any computer, on any job.';
   }catch(e){
     if(msg){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
   }finally{ if(btn){ btn.disabled = false; btn.textContent = o; } }
@@ -1034,13 +1055,18 @@ async function libPullFromCloud(btn, quiet){
     }
     const manifest = JSON.parse(latest.lib_manifest.data);
     let added = 0;
+    const trouble = [];
     for(const sh of (manifest.sheets||[])){
       let rows = [];
+      let missing = 0;
       for(let i=0;i<sh.chunks;i++){
         const r = latest[libChunkKey(sh.id, i)];
-        if(!r) continue;
-        rows = rows.concat((JSON.parse(r.data).rows)||[]);
+        if(!r){ missing++; continue; }
+        try{ rows = rows.concat((JSON.parse(r.data).rows)||[]); }
+        catch(e){ missing++; }
       }
+      if(missing) trouble.push('"'+sh.name+'" is listed with '+sh.rows+' rows in '+sh.chunks+
+        ' parts, but '+missing+' of those parts are not in the database. Send the library up again from the computer that has it.');
       if(!rows.length) continue;
       await libPut({ id:sh.id, name:sh.name, file:sh.file, sheet:sh.sheet, cols:sh.cols,
         rows:rows, header_row:sh.header_row, imported_at:sh.imported_at,
@@ -1060,6 +1086,11 @@ async function libPullFromCloud(btn, quiet){
     libIdx = {}; libRowCache = {}; libLoadedAll = false;
     await libRefreshIndex();
     renderLibrary(); updateCounts();
+    if(trouble.length && msg && !quiet){
+      msg.style.color = '#B4451F';
+      msg.textContent = trouble.join(' ');
+      if(!added) return 0;
+    }
     const rowsIn = (manifest.sheets||[]).reduce((a,x)=>a+(x.rows||0),0);
     const vocabN = Object.keys(LIB_VOCAB).length;
     if(msg && !quiet) msg.textContent = added + ' sheet' + (added===1?'':'s') + ', ' + rowsIn.toLocaleString() +
@@ -4654,7 +4685,7 @@ function moveLine(key, where){
   const m = manualMoves();
   if(where === 'auto') delete m[key]; else m[key] = where;
   saveToCloud('p2_comparison', cmpData);
-  renderBuySheet();
+  keepPlace(renderBuySheet);
 }
 // Which list a line belongs on. The rule is yours: a price we can stand behind - from a
 // supplier or from your own library - means we know what to do with it. Nothing anywhere means
@@ -4672,15 +4703,30 @@ function whyNoPrice(l){
   }
   return 'No price anybody will stand behind.';
 }
+// Ticking a box re-draws the tab, and a re-draw used to throw you back to the top or the
+// bottom of a two hundred row list. Hold the scroll position across any redraw.
+function keepPlace(fn){
+  const y = window.scrollY;
+  fn();
+  // after the browser has painted, put it back
+  requestAnimationFrame(()=>window.scrollTo(0, y));
+}
 function selOf(list){ return list === 'buy' ? selBuy : selRfq; }
 function selToggle(list, key, on){ const m = selOf(list); if(on) m[key] = true; else delete m[key]; renderSelCount(list); }
 function selCount(list){ return Object.keys(selOf(list)).length; }
 function selAll(list, cat, on){
   const bs = buildBuySheet(); if(!bs) return;
+  const keys = [];
   (bs.lines||[]).filter(l=>lineList(l) === list)
     .filter(l=>!cat || (l.category||'Other') === cat)
-    .forEach(l=>{ const k = rfqKeyOf(l); if(on) selOf(list)[k] = true; else delete selOf(list)[k]; });
-  renderBuySheet();
+    .forEach(l=>{ const k = rfqKeyOf(l); keys.push(k); if(on) selOf(list)[k] = true; else delete selOf(list)[k]; });
+  // Tick the boxes where they stand rather than rebuilding the page. Nothing moves under you.
+  const scope = document.getElementById(list === 'buy' ? 'buyListOut' : 'rfqOut');
+  if(scope) scope.querySelectorAll('tbody input[type=checkbox]').forEach(box=>{
+    const oc = box.getAttribute('onchange') || '';
+    if(keys.some(k=>oc.indexOf(JSON.stringify(k)) >= 0)) box.checked = !!on;
+  });
+  renderSelCount(list);
 }
 function selMove(list){
   const bs = buildBuySheet(); if(!bs) return;
@@ -4691,7 +4737,7 @@ function selMove(list){
   keys.forEach(k=>{ m[k] = to; });
   if(list === 'buy') selBuy = {}; else selRfq = {};
   saveToCloud('p2_comparison', cmpData);
-  renderBuySheet();
+  keepPlace(renderBuySheet);
 }
 function renderSelCount(list){
   const el = document.getElementById(list === 'buy' ? 'buySelMsg' : 'rfqMsg');
@@ -4747,9 +4793,9 @@ function renderRfq(){
       ' Anything your library can price is on the buy sheet above, not here.</div>'+
     Object.keys(r.byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
       const rows = r.byCat[cat];
-      return '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
+      return '<div class="grp cmp-sec">'+HEADC+'<span class="t">'+esc(cat)+'</span>'+
         '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+' &middot; '+catBox('rfq', cat)+'</span></div>'+
-        '<div class="collapsible-body" style="display:block">'+
+        '<div class="collapsible-body" style="display:none">'+
         '<div class="tablewrap"><table class="matrix"><thead><tr>'+
         '<th style="width:44px"></th><th style="min-width:240px">Item</th><th style="width:110px">Quantity</th>'+
         '<th style="width:150px">Trade</th><th style="min-width:230px">Why it is here</th>'+
@@ -4825,6 +4871,22 @@ function lookChip(l){
   return '<div style="margin-top:3px"><span class="mm miss">LOOK</span> '+
     '<span class="why" style="display:inline">'+esc(why.join('; '))+'</span></div>';
 }
+// Act on a whole flagged group where you are looking at it. Hunting the same lines back down
+// in the two lists below is exactly the friction that makes a warning get ignored.
+function lookMove(kind, to){
+  const g = needsLookGroups();
+  if(!g || !g[kind] || !g[kind].length) return;
+  const m = manualMoves();
+  g[kind].forEach(l=>{ m[rfqKeyOf(l)] = to; });
+  saveToCloud('p2_comparison', cmpData);
+  keepPlace(renderBuySheet);
+}
+function lookSelect(kind){
+  const g = needsLookGroups();
+  if(!g || !g[kind] || !g[kind].length) return;
+  g[kind].forEach(l=>{ selOf(lineList(l))[rfqKeyOf(l)] = true; });
+  keepPlace(renderBuySheet);
+}
 function renderNeedsLook(){
   const out = document.getElementById('lookOut');
   const card = document.getElementById('lookCard');
@@ -4832,11 +4894,16 @@ function renderNeedsLook(){
   const g = needsLookGroups();
   if(!g || !g.total){ card.style.display='none'; out.innerHTML=''; return; }
   card.style.display = 'block';
-  const block = (title, tone, list, what, why) => !list.length ? '' :
-    '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(title)+'</span>'+
-      '<span class="c">'+list.length+' line'+(list.length===1?'':'s')+'</span></div>'+
-    '<div class="collapsible-body" style="display:block">'+
+  const block = (title, tone, list, what, why, kind) => !list.length ? '' :
+    '<div class="grp cmp-sec">'+HEADC+'<span class="t">'+esc(title)+'</span>'+
+      '<span class="c">'+list.length+' line'+(list.length===1?'':'s')+' &middot; click to open</span></div>'+
+    '<div class="collapsible-body" style="display:none">'+
       '<div class="note '+tone+'" style="margin-top:0">'+why+'</div>'+
+      (kind ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+        '<button class="btn2" type="button" onclick="lookMove(\''+kind+'\',\'rfq\')">Send all of these out for quoting</button>'+
+        '<button class="btn2" type="button" onclick="lookMove(\''+kind+'\',\'buy\')">Keep all of these on the buy sheet</button>'+
+        '<button class="btn2" type="button" onclick="lookSelect(\''+kind+'\')">Just tick them, I will decide line by line</button>'+
+        '</div>' : '')+
       '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:250px">Item</th>'+
       '<th style="width:140px">Trade</th><th style="width:110px">List</th><th>'+esc(what)+'</th></tr></thead><tbody>'+
       list.slice(0,60).map(l=>'<tr><td><div class="itemdesc">'+esc(l.takeoff_line||l.item||'')+'</div>'+
@@ -4854,15 +4921,15 @@ function renderNeedsLook(){
     '<div class="note warn" style="margin-top:0"><b>'+g.total+' line'+(g.total===1?'':'s')+' worth putting your eyes on before you trust the two lists below.</b> '+
       'Nothing here is wrong on its own &mdash; these are the places where the tool is least sure, gathered up so you do not have to hunt for them.</div>'+
     block('Nobody quoted these: the only price is your own', 'err', g.noQuote, 'What it is priced from',
-      'These have a price beside them, so they read as handled. They are not. No supplier has offered anything: that figure is what the item costs you, not a commitment from anybody to supply it at that price. Decide whether you are content to carry them, or move them to the RFQ and get somebody to quote them.')+
+      'These have a price beside them, so they read as handled. They are not. No supplier has offered anything: that figure is what the item costs you, not a commitment from anybody to supply it at that price. Decide whether you are content to carry them, or move them to the RFQ and get somebody to quote them.', 'noQuote')+
     block('The trade is not certain', 'warn', g.unsureTrade, 'Why it could not be settled',
-      'No spec section number, and the wording does not settle whose work this is. If it is not yours, move it to the RFQ or drop it.')+
+      'No spec section number, and the wording does not settle whose work this is. If it is not yours, move it to the RFQ or drop it.', 'unsureTrade')+
     block('Reads as another trade', 'warn', g.otherTrade, 'How it was read',
-      'The spec section or the wording says this belongs to mechanical, electrical or fire. Worth a glance before you price or quote it.')+
+      'The spec section or the wording says this belongs to mechanical, electrical or fire. Worth a glance before you price or quote it.', 'otherTrade')+
     block('Priced only off a shaky library match', 'warn', g.shakyLib, 'What it matched',
-      'Nobody quoted these, so the only price is from your own list, and the match itself is weak. A wrong match here puts a wrong price straight on the buy sheet.')+
+      'Nobody quoted these, so the only price is from your own list, and the match itself is weak. A wrong match here puts a wrong price straight on the buy sheet.', 'shakyLib')+
     block('Supplier prices that cannot be the same item', 'err', g.outliers, 'What is out of line',
-      'One supplier is wildly away from the others on the same line. That is evidence of a bad match, not a bargain, and the odd one is already kept out of the numbers.');
+      'One supplier is wildly away from the others on the same line. That is evidence of a bad match, not a bargain, and the odd one is already kept out of the numbers.', 'outliers');
 }
 // What can be bought: every line with a price somebody will stand behind, from a supplier or
 // from your own library. No recommendation is made here. The prices are laid out and a person
@@ -4887,9 +4954,9 @@ function renderBuyList(){
       'No winner is picked here: the prices are side by side and the call is yours.</div>'+
     Object.keys(byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
       const rows = byCat[cat];
-      return '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
+      return '<div class="grp cmp-sec">'+HEADC+'<span class="t">'+esc(cat)+'</span>'+
         '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+' &middot; '+catBox('buy', cat)+'</span></div>'+
-        '<div class="collapsible-body" style="display:block">'+
+        '<div class="collapsible-body" style="display:none">'+
         '<div class="tablewrap"><table class="matrix"><thead><tr>'+
         '<th style="width:44px"></th><th style="min-width:230px">Item</th><th style="width:105px">Quantity</th><th style="width:140px">Trade</th>'+
         names.map(n=>'<th class="supcol" style="width:130px">'+esc(n)+'</th>').join('')+
@@ -4924,6 +4991,55 @@ function renderBuyList(){
             '</tr>';
         }).join('')+'</tbody></table></div></div></div>';
     }).join('');
+}
+// The buy sheet has to come off the screen and into somebody's hands. Selected lines if any
+// are ticked, otherwise the lot. Every price that is on screen, including your own, so whoever
+// places the order can see what each supplier said and what it costs you.
+function downloadBuySheet(){
+  const bs = buildBuySheet();
+  const msg = document.getElementById('buySelMsg');
+  if(!bs){ if(msg) msg.textContent = 'Nothing to download yet.'; return; }
+  const all = (bs.lines||[]).filter(l=>lineList(l) === 'buy');
+  const picked = all.filter(l=>selBuy[rfqKeyOf(l)]);
+  const lines = picked.length ? picked : all;
+  if(!lines.length){ if(msg) msg.textContent = 'Nothing on the buy sheet yet.'; return; }
+  if(typeof XLSX === 'undefined'){ if(msg) msg.textContent = 'The spreadsheet library did not load. Reload the page.'; return; }
+  const names = bs.names || [];
+  const job = projectName() || 'this job';
+  const head = [
+    ['BUY SHEET'],
+    ['Job', job],
+    ['Prepared', new Date().toLocaleDateString()],
+    ['Lines', lines.length + (picked.length ? ' (the ones you ticked)' : ' (all of them)')],
+    [],
+    ['No supplier is recommended here. Library prices are what the item costs us, not an offer from anybody.'],
+    [],
+    ['Category','Item','Specified model','Quantity','Unit','Trade','Source','Needs a look']
+      .concat(names.map(n=>n)).concat(['Our library cost','Library matched'])
+  ];
+  const body = lines.slice().sort((a,b)=>
+      (CATEGORIES.indexOf(a.category||'Other') - CATEGORIES.indexOf(b.category||'Other')) ||
+      String(a.item).localeCompare(String(b.item)))
+    .map(l=>{
+      const flags = (lookKeys()[rfqKeyOf(l)]||[]).join('; ');
+      const row = [ l.category||'Other', l.takeoff_line||l.item||'', l.spec_model||'',
+        l.required_qty||'', l.required_uom||'', (l.trade&&l.trade.trade)||'',
+        (l.source&&l.source.label)||'', flags ];
+      names.forEach(n=>{
+        const o = l.offers.find(x=>x.supplier===n);
+        row.push(o && o.price !== null ? o.price : (o && o.match !== 'missing' ? 'quoted, cannot use' : ''));
+      });
+      row.push(l.libPriced ? (l.lib.price * (l.required_qty||1)) : '');
+      row.push(l.libPriced ? String(l.lib.description).slice(0,70) : '');
+      return row;
+    });
+  const ws = XLSX.utils.aoa_to_sheet(head.concat(body));
+  ws['!cols'] = [{wch:20},{wch:46},{wch:20},{wch:10},{wch:8},{wch:18},{wch:12},{wch:30}]
+    .concat(names.map(()=>({wch:16}))).concat([{wch:16},{wch:44}]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Buy sheet');
+  XLSX.writeFile(wb, slugify(job) + '-buy-sheet.xlsx');
+  if(msg) msg.textContent = lines.length + ' line' + (lines.length===1?'':'s') + ' written out.';
 }
 // Out as a spreadsheet an estimator can put straight in front of a supply house.
 function downloadRfq(){
