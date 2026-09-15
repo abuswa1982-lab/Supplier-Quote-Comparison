@@ -471,7 +471,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B29</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B30</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -534,12 +534,12 @@
       <b>This is what the bid documents require, not what you asked for.</b> You are not making changes here: it is a read of what the project itself demands, so the takeoff can be checked for anything the bid calls for and the takeoff missed. It was already read and stored by the Bid Requirements Reader, so it arrives on its own when you load the project. Nothing to upload and nothing to re-read.
     </div>
     <div class="card">
-      <div class="collapsible-head open" onclick="toggleCollapse(this)">
+      <div class="collapsible-head" onclick="toggleCollapse(this)">
         <i class="chev">&#9662;</i>
         <h2>Pull from the Bid Requirements Reader</h2>
         <span class="collapsible-summary" id="reqSummary">nothing loaded</span>
       </div>
-      <div class="collapsible-body" style="display:block">
+      <div class="collapsible-body" style="display:none">
         <p class="hint" style="margin:0 0 12px">This comes across on its own when you load the project at the top of the page, so there is normally nothing to do here. The button is only for when you have run the Bid Requirements Reader again since and want the newer findings.</p>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <button class="btn2 primary" id="narrowBtn" onclick="narrowRequirements(this)" type="button">Narrow to real material items</button>
@@ -648,7 +648,6 @@
         <button class="btn2" type="button" onclick="selAll('rfq', null, true)">Select all</button>
         <button class="btn2" type="button" onclick="selAll('rfq', null, false)">Clear</button>
         <button class="btn2 primary" type="button" onclick="downloadRfq()">Download RFQ for selected</button>
-        <button class="btn2" type="button" onclick="selMove('rfq')">Move selected to buy sheet</button>
         <span class="hint" id="rfqMsg" style="margin:0"></span>
       </div>
       <div id="rfqOut"></div>
@@ -2691,10 +2690,10 @@ function renderQuoteResults(){
     const byCat = {};
     (d.items||[]).forEach(it=>{ byCat[it.category] = (byCat[it.category]||0)+1; });
     return '<div class="card">'+
-      '<div class="collapsible-head open" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i><h2>'+esc(s.name)+'</h2>'+
+      '<div class="collapsible-head" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i><h2>'+esc(s.name)+'</h2>'+
         '<span class="collapsible-summary">'+(d.items||[]).length+' lines'+(groups.length?(' in '+groups.length+' group'+(groups.length===1?'':'s')):'')+
         ' &middot; '+(tot.value?money(tot.value):'no total')+(high.length?(' &middot; '+high.length+' thing'+(high.length===1?'':'s')+' to resolve'):'')+'</span></div>'+
-      '<div class="collapsible-body" style="display:block">'+
+      '<div class="collapsible-body" style="display:none">'+
 
       (((d._read&&d._read.empty_batches)||[]).length ? '<div class="note warn"><b>'+d._read.empty_batches.length+' batch'+(d._read.empty_batches.length===1?'':'es')+' came back with nothing on '+(d._read.empty_batches.length===1?'it':'them')+'.</b> '+
         esc(d._read.empty_batches.join(', '))+'. Nothing was read from '+(d._read.empty_batches.length===1?'that':'those')+' and nothing was invented in '+(d._read.empty_batches.length===1?'its':'their')+' place. If those pages do have content, the scan needs redoing.</div>' : '')+
@@ -3242,6 +3241,61 @@ async function pullFromPhase1(btn){
 }
 // What trade each requirement belongs to, counted up, so it is obvious at a glance whether the
 // spec sections carried division numbers on this job or whether it is falling back on wording.
+// Tick a trade, take the items away and read them. This is how a wrong trade call gets found:
+// somebody who knows the job looks at the 163 things the tool called mechanical and says no,
+// eleven of those are ours. Free, local, no AI.
+let tradePicked = {};
+function tradeToggle(trade, on){ if(on) tradePicked[trade] = true; else delete tradePicked[trade]; tradeCount(); }
+function tradeSelectAll(on){
+  if(!bidReq) return;
+  tradeBreakdown(bidReq.triaged || bidReq.findings || []).forEach(r=>{
+    if(on) tradePicked[r.trade] = true; else delete tradePicked[r.trade];
+  });
+  document.querySelectorAll('#reqOut input.tradebox').forEach(b=>{ b.checked = !!on; });
+  tradeCount();
+}
+function tradeCount(){
+  const el = document.getElementById('tradeMsg');
+  if(!el || !bidReq) return;
+  const list = (bidReq.triaged || bidReq.findings || []);
+  const n = list.filter(f=>tradePicked[tradeOf(f).trade]).length;
+  const t = Object.keys(tradePicked).length;
+  el.textContent = t ? (t + ' trade' + (t===1?'':'s') + ' ticked, ' + n + ' requirement' + (n===1?'':'s') + ' in them')
+                     : 'Nothing ticked.';
+}
+function downloadTrades(){
+  const el = document.getElementById('tradeMsg');
+  if(!bidReq){ if(el) el.textContent = 'Nothing loaded.'; return; }
+  if(typeof XLSX === 'undefined'){ if(el) el.textContent = 'The spreadsheet library did not load. Reload the page.'; return; }
+  const list = (bidReq.triaged || bidReq.findings || []);
+  const picked = Object.keys(tradePicked).length
+    ? list.filter(f=>tradePicked[tradeOf(f).trade])
+    : list;
+  if(!picked.length){ if(el) el.textContent = 'Nothing in the trades you ticked.'; return; }
+  const job = projectName() || 'this job';
+  const head = [
+    ['BID REQUIREMENTS BY TRADE'],
+    ['Job', job],
+    ['Prepared', new Date().toLocaleDateString()],
+    ['Requirements', picked.length + (Object.keys(tradePicked).length ? ' (the trades you ticked)' : ' (all of them)')],
+    [],
+    ['Where a spec section number is present the trade is read off the CSI division and cannot be wrong. Where there is none it was read off the wording, and "Not sure" means nothing settled it. Those are the ones worth a human eye.'],
+    [],
+    ['Trade','Ours?','How it was decided','Spec section','Came from','Requirement','Detail']
+  ];
+  const body = picked.map(f=>{
+    const t = tradeOf(f);
+    return [ t.trade, t.mine === true ? 'yes' : t.mine === false ? 'no' : 'not sure',
+             t.why || '', f.source || '', f.from || '',
+             f.requirement || '', (f.detail||'').slice(0,400) ];
+  }).sort((a,b)=>String(a[0]).localeCompare(String(b[0])) || String(a[5]).localeCompare(String(b[5])));
+  const ws = XLSX.utils.aoa_to_sheet(head.concat(body));
+  ws['!cols'] = [{wch:20},{wch:10},{wch:46},{wch:24},{wch:16},{wch:70},{wch:60}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'By trade');
+  XLSX.writeFile(wb, slugify(job) + '-requirements-by-trade.xlsx');
+  if(el) el.textContent = picked.length + ' requirement' + (picked.length===1?'':'s') + ' written out.';
+}
 function tradePanelHtml(){
   if(!bidReq) return '';
   const list = (bidReq.triaged || bidReq.findings || []);
@@ -3258,9 +3312,17 @@ function tradePanelHtml(){
         ? (pct+'% of these carry a spec section number, so their trade is read straight off the CSI division &mdash; a lookup, not a guess, and it costs nothing.')
         : ('None of these carry a spec section number, so the trade is being read off the wording alone. That is weaker: treat "Not sure" as the honest answer and check those by hand.'))+
       ' Work belonging to another trade will not be sent out for pricing.</div>'+
-    '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:200px">Trade</th><th style="width:90px">Count</th>'+
+    '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0">'+
+      '<button class="btn2 primary" type="button" onclick="downloadTrades()">Download ticked trades as Excel</button>'+
+      '<button class="btn2" type="button" onclick="tradeSelectAll(true)">Select all</button>'+
+      '<button class="btn2" type="button" onclick="tradeSelectAll(false)">Clear</button>'+
+      '<span class="hint" id="tradeMsg" style="margin:0">Nothing ticked &mdash; downloading takes the lot.</span>'+
+    '</div>'+
+    '<div class="tablewrap"><table class="matrix"><thead><tr><th style="width:44px"></th><th style="width:190px">Trade</th><th style="width:80px">Count</th>'+
       '<th style="width:150px">How it was decided</th><th>Example</th></tr></thead><tbody>'+
     rows.map(r=>'<tr'+(r.mine===null?' class="hasissue"':'')+'>'+
+      '<td><input type="checkbox" class="tradebox" '+(tradePicked[r.trade]?'checked':'')+
+        ' onchange="tradeToggle('+JSON.stringify(r.trade).replace(/"/g,'&quot;')+', this.checked)"></td>'+
       '<td><span class="catchip">'+esc(r.trade)+'</span>'+
         (r.mine===true?'<div class="itemsub">ours</div>':r.mine===false?'<div class="itemsub">not ours</div>':'<div class="itemsub" style="color:var(--rust)">needs a human</div>')+'</td>'+
       '<td class="qtybox">'+r.n+'</td>'+
@@ -4318,9 +4380,9 @@ function renderCompare(){
       const takeoffN = ((takeoffData&&takeoffData.items)||[]).filter(it=>catOf(it)===cat).length;
       const quotedN = suppliers.filter(s=>s.data).reduce((a,s)=>a+(s.data.items||[]).filter(it=>catOf(it)===cat).length, 0);
       const why = (run.failed||[]).find(f=>f.category===cat);
-      matrixHtml += '<div class="grp cmp-sec">'+HEAD+'<span class="t" style="color:var(--rust)">'+esc(cat)+'</span>'+
+      matrixHtml += '<div class="grp cmp-sec">'+HEADC+'<span class="t" style="color:var(--rust)">'+esc(cat)+'</span>'+
         '<span class="c">not compared</span></div>'+
-        '<div class="collapsible-body" style="display:block">'+
+        '<div class="collapsible-body" style="display:none">'+
         '<div class="note err" style="margin:0"><b>This category was never compared.</b> '+
         takeoffN+' takeoff line'+(takeoffN===1?'':'s')+' and '+quotedN+' quoted line'+(quotedN===1?'':'s')+
         ' in '+esc(cat)+' are missing from everything above and below: the matrix, the exceptions, the buy sheet and the downloads. '+
@@ -4334,9 +4396,9 @@ function renderCompare(){
     Object.keys(byCat).sort((a,b)=>flaggedIn(b)-flaggedIn(a) || CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).forEach(cat=>{
       const rows = byCat[cat];
       const flagged = rows.filter(r=>(r.issues||[]).length).length;
-      matrixHtml += '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
+      matrixHtml += '<div class="grp cmp-sec">'+HEADC+'<span class="t">'+esc(cat)+'</span>'+
         '<span class="c">'+rows.length+' item'+(rows.length===1?'':'s')+(flagged?' &middot; '+flagged+' flagged':'')+'</span></div>'+
-        '<div class="collapsible-body" style="display:block">'+
+        '<div class="collapsible-body" style="display:none">'+
         '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:230px">Item</th>'+
         '<th class="supcol" style="min-width:150px">Source &amp; trade</th>'+
         names.map(n=>'<th class="supcol" style="min-width:190px">'+esc(n)+'</th>').join('')+
@@ -4830,10 +4892,8 @@ function needsLookGroups(){
   if(!bs) return null;
   const lines = bs.lines || [];
   const g = {
-    // The one that worries you, and rightly. It has a price beside it so it reads as handled,
-    // but no supplier has agreed to supply anything: the number is what it costs you, not an
-    // offer. Left unchecked, that is an assumption sitting quietly on a buy sheet.
-    noQuote:     lines.filter(l=>lineList(l)==='buy' && !l.offers.some(o=>o.price!==null) && l.libPriced),
+    // "Nobody quoted this" used to be its own group here. It said the same thing twice: the buy
+    // sheet already shows NOT QUOTED under every supplier on exactly those rows. Removed.
     unsureTrade: lines.filter(l=>l.trade && l.trade.mine === null),
     otherTrade:  lines.filter(l=>l.trade && l.trade.mine === false),
     shakyLib:    lines.filter(l=>lineList(l)==='buy' && l.libPriced && l.lib.confidence === 'low'
@@ -4847,7 +4907,6 @@ function needsLookGroups(){
     const k = rfqKeyOf(l);
     (g.keys[k] = g.keys[k] || []).push(why);
   });
-  mark(g.noQuote, 'nobody quoted this');
   mark(g.unsureTrade, 'trade not certain');
   mark(g.otherTrade, 'reads as another trade');
   mark(g.shakyLib, 'weak library match');
@@ -4894,6 +4953,8 @@ function renderNeedsLook(){
   const g = needsLookGroups();
   if(!g || !g.total){ card.style.display='none'; out.innerHTML=''; return; }
   card.style.display = 'block';
+  const bsN = buildBuySheet();
+  const names = (bsN && bsN.names) || [];
   const block = (title, tone, list, what, why, kind) => !list.length ? '' :
     '<div class="grp cmp-sec">'+HEADC+'<span class="t">'+esc(title)+'</span>'+
       '<span class="c">'+list.length+' line'+(list.length===1?'':'s')+' &middot; click to open</span></div>'+
@@ -4901,27 +4962,40 @@ function renderNeedsLook(){
       '<div class="note '+tone+'" style="margin-top:0">'+why+'</div>'+
       (kind ? '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
         '<button class="btn2" type="button" onclick="lookMove(\''+kind+'\',\'rfq\')">Send all of these out for quoting</button>'+
-        '<button class="btn2" type="button" onclick="lookMove(\''+kind+'\',\'buy\')">Keep all of these on the buy sheet</button>'+
+        '<button class="btn2" type="button" onclick="lookMove(\''+kind+'\',\'buy\')">Leave all of these where they are</button>'+
         '<button class="btn2" type="button" onclick="lookSelect(\''+kind+'\')">Just tick them, I will decide line by line</button>'+
         '</div>' : '')+
-      '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:250px">Item</th>'+
-      '<th style="width:140px">Trade</th><th style="width:110px">List</th><th>'+esc(what)+'</th></tr></thead><tbody>'+
+      '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:210px">Item</th>'+
+      '<th style="width:88px">Qty</th><th style="width:128px">Trade</th><th style="width:78px">List</th>'+
+      names.map(n=>'<th class="supcol" style="width:118px">'+esc(n)+'</th>').join('')+
+      '<th class="supcol libcol" style="width:130px">Your library</th>'+
+      '<th style="min-width:200px">'+esc(what)+'</th></tr></thead><tbody>'+
       list.slice(0,60).map(l=>'<tr><td><div class="itemdesc">'+esc(l.takeoff_line||l.item||'')+'</div>'+
         '<div class="itemsub">'+esc(l.category||'')+'</div></td>'+
+        '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
         '<td>'+tradeChip(l.trade)+'</td>'+
         '<td><span class="mm '+(lineList(l)==='buy'?'exact':'unclear')+'">'+(lineList(l)==='buy'?'BUY':'RFQ')+'</span></td>'+
+        names.map(n=>{
+          const o = (l.offers||[]).find(x=>x.supplier===n);
+          if(!o || o.price === null) return '<td class="supcell"><span class="mm miss">'+
+            (o && o.match!=='missing' ? 'CANNOT USE' : 'NOT QUOTED')+'</span></td>';
+          return '<td class="supcell"><div class="pricebox">'+money(o.price)+'</div></td>';
+        }).join('')+
+        '<td class="supcell libcell">'+(l.libPriced
+          ? '<div class="pricebox">'+money(l.lib.price*(l.required_qty||1))+'</div>'+
+            '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
+            esc(l.lib.confidence)+'</span> '+esc(String(l.lib.description).slice(0,36))+'</div>'
+          : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>'+
         '<td class="why">'+esc(
           list === g.outliers ? priceSanity(l._row).outliers.map(o=>o.supplier+' at '+money(o.unit)+', '+o.why).join('; ')
           : list === g.shakyLib ? ('matched "'+String(l.lib.description).slice(0,60)+'" on a low confidence, and that is the only price on this line')
           : (l.trade && l.trade.why) || ''
         )+'</td></tr>').join('')+
-      (list.length>60 ? '<tr><td colspan="4" class="itemsub">and '+(list.length-60)+' more</td></tr>' : '')+
+      (list.length>60 ? '<tr><td colspan="'+(6+names.length)+'" class="itemsub">and '+(list.length-60)+' more</td></tr>' : '')+
       '</tbody></table></div></div></div>';
   out.innerHTML =
     '<div class="note warn" style="margin-top:0"><b>'+g.total+' line'+(g.total===1?'':'s')+' worth putting your eyes on before you trust the two lists below.</b> '+
       'Nothing here is wrong on its own &mdash; these are the places where the tool is least sure, gathered up so you do not have to hunt for them.</div>'+
-    block('Nobody quoted these: the only price is your own', 'err', g.noQuote, 'What it is priced from',
-      'These have a price beside them, so they read as handled. They are not. No supplier has offered anything: that figure is what the item costs you, not a commitment from anybody to supply it at that price. Decide whether you are content to carry them, or move them to the RFQ and get somebody to quote them.', 'noQuote')+
     block('The trade is not certain', 'warn', g.unsureTrade, 'Why it could not be settled',
       'No spec section number, and the wording does not settle whose work this is. If it is not yours, move it to the RFQ or drop it.', 'unsureTrade')+
     block('Reads as another trade', 'warn', g.otherTrade, 'How it was read',
