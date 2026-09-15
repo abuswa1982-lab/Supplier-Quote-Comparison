@@ -108,6 +108,7 @@
   .buildstamp{margin-left:auto;align-self:center;font-family:var(--display);font-size:11px;
     letter-spacing:.04em;color:var(--muted);padding:0 2px 8px;white-space:nowrap}
   .buildstamp b{color:var(--navy);font-weight:600}
+  .pagetabs .tabcount.warnbadge{background:var(--rust);color:#fff}
   .pagetabs .tabcount{
     font-family:var(--mono);font-size:10px;font-weight:600;background:var(--blue-tint);color:var(--navy);
     border:1px solid #CBDDEE;border-radius:8px;padding:1px 6px;margin-left:5px;vertical-align:1px;
@@ -470,7 +471,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B25</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B28</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -619,19 +620,34 @@
       <b>Two halves of one question: for every line, is there a price worth standing behind?</b> Where there is, it is on the buy sheet with the reason it can be trusted. Where there is not, it drops into the RFQ list to go back out for quoting. Nothing on this tab is asked of the AI: every figure is arithmetic done in the browser from what is already on screen, so you can check any of it by hand.
     </div>
     <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 5.</p></div>
+    <div class="card" id="lookCard" style="display:none">
+      <h2>Worth a look first</h2>
+      <p class="hint" style="margin:0 0 10px">The places where this tool is least certain, gathered in one spot. Folded shut &mdash; open what you want to check.</p>
+      <div id="lookOut"></div>
+    </div>
     <div class="card" id="buyListCard" style="display:none">
       <h2>What we can buy</h2>
-      <p class="hint" style="margin:0 0 10px">Every line with a price behind it, from a supplier or from your own price list. Prices sit side by side and nothing is recommended &mdash; you decide where to buy. If a price here is one you would not stand behind, move that line to the RFQ and it goes out for quoting instead.</p>
+      <p class="hint" style="margin:0 0 10px">Every line with a price behind it, from a supplier or from your own price list. Prices sit side by side and nothing is recommended &mdash; you decide where to buy. Tick anything you would not stand behind and move it across; it goes out for quoting instead.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn2" type="button" onclick="selAll('buy', null, true)">Select all</button>
+        <button class="btn2" type="button" onclick="selAll('buy', null, false)">Clear</button>
+        <button class="btn2 primary" type="button" onclick="selMove('buy')">Move selected to RFQ</button>
+        <span class="hint" id="buySelMsg" style="margin:0"></span>
+      </div>
       <div id="buyListOut"></div>
     </div>
-    <div id="buyResults"></div>
+    <!-- The old four-state roll-up used to sit here. It listed lines as "not comparable" with no
+         way to do anything about them, and it double-counted everything the two lists above and
+         below already show. Two lists, and every line on one of them. -->
+    <div id="buyResults" style="display:none"></div>
     <div class="card" id="rfqCard" style="display:none">
       <h2>Still needs a quote</h2>
       <p class="hint" style="margin:0 0 10px">Every line with no price anybody will stand behind: nobody quoted it, or what was quoted could not be compared. Tick what you want to send out and it comes off as an Excel RFQ. This costs nothing and asks nothing of the AI.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <button class="btn2" type="button" onclick="rfqSelectAll(true)">Select all</button>
-        <button class="btn2" type="button" onclick="rfqSelectAll(false)">Clear</button>
-        <button class="btn2 primary" type="button" onclick="downloadRfq()">Download RFQ as Excel</button>
+        <button class="btn2" type="button" onclick="selAll('rfq', null, true)">Select all</button>
+        <button class="btn2" type="button" onclick="selAll('rfq', null, false)">Clear</button>
+        <button class="btn2 primary" type="button" onclick="downloadRfq()">Download RFQ for selected</button>
+        <button class="btn2" type="button" onclick="selMove('rfq')">Move selected to buy sheet</button>
         <span class="hint" id="rfqMsg" style="margin:0"></span>
       </div>
       <div id="rfqOut"></div>
@@ -988,9 +1004,18 @@ async function libPushToCloud(btn){
         use: rec.use !== false });
     }
     await saveToProject(LIBRARY_PROJECT, 'lib_manifest', manifest);
+    // Send the shorthand as well. "Send this library to the database" has to mean all of it,
+    // and the shorthand is the half that cannot be downloaded again from a supplier.
+    const vocabN = Object.keys(LIB_VOCAB).length;
+    if(vocabN){
+      if(msg) msg.textContent = 'Sending the shorthand…';
+      await saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta });
+    }
     const total = manifest.sheets.reduce((a,x)=>a+x.rows,0);
     if(msg) msg.textContent = manifest.sheets.length + ' sheet' + (manifest.sheets.length===1?'':'s') +
-      ', ' + total.toLocaleString() + ' rows, now in the database. It will come back on any computer, on any job.';
+      ', ' + total.toLocaleString() + ' rows' +
+      (vocabN ? (', and ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand') : '') +
+      ', now in the database. It will come back on any computer, on any job.';
   }catch(e){
     if(msg){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
   }finally{ if(btn){ btn.disabled = false; btn.textContent = o; } }
@@ -1035,7 +1060,13 @@ async function libPullFromCloud(btn, quiet){
     libIdx = {}; libRowCache = {}; libLoadedAll = false;
     await libRefreshIndex();
     renderLibrary(); updateCounts();
-    if(msg && !quiet) msg.textContent = added + ' sheet' + (added===1?'':'s') + ' brought down from the database onto this computer.';
+    const rowsIn = (manifest.sheets||[]).reduce((a,x)=>a+(x.rows||0),0);
+    const vocabN = Object.keys(LIB_VOCAB).length;
+    if(msg && !quiet) msg.textContent = added + ' sheet' + (added===1?'':'s') + ', ' + rowsIn.toLocaleString() +
+      ' rows' + (vocabN ? (', and ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand') : '') +
+      ', brought down onto this computer.' +
+      (added < (manifest.sheets||[]).length ? ' ' + ((manifest.sheets||[]).length - added) +
+        ' sheet(s) in the manifest had no rows stored and were skipped.' : '');
     return added;
   }catch(e){
     if(msg && !quiet){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
@@ -2353,9 +2384,13 @@ function updateCounts(){
   }
   const bsBadge = document.getElementById('tc-buy');
   if(bsBadge){
-    const bs = cmpData ? buildBuySheet() : null;
-    bsBadge.textContent = bs ? bs.counts.head_to_head : 0;
-    bsBadge.title = bs ? (bs.counts.head_to_head+' lines can be price-compared head to head') : '';
+    // The badge shows what needs a human, not what is already fine. A number that only counts
+    // the comfortable lines is the number nobody needs.
+    const g = cmpData ? needsLookGroups() : null;
+    const n = g ? g.total : 0;
+    bsBadge.textContent = n || (cmpData ? '0' : '0');
+    bsBadge.title = n ? (n+' line'+(n===1?'':'s')+' want'+(n===1?'s':'')+' a human look before you trust this') : 'nothing flagged for a look';
+    bsBadge.classList.toggle('warnbadge', n > 0);
   }
   const rs = document.getElementById('reqSummary');
   if(rs) rs.textContent = bidReq
@@ -4602,7 +4637,11 @@ function qtyCellHtml(o, l){
 // The other half of the buy sheet. A line is here because no price on it can be stood behind:
 // nobody quoted it, or what was quoted could not be compared. Built entirely from what is
 // already on screen - a filter and a sort, nothing asked of the AI, nothing charged.
-let rfqPicked = {};      // line -> ticked to go out on the RFQ
+// One meaning for a tick: this line is selected. Everything then acts on the selection - send
+// these out, move these across - instead of a button per row, which is unusable on a list of
+// two hundred.
+let selBuy = {}, selRfq = {};
+let rfqPicked = {};      // kept so older calls do not break; the RFQ now acts on selRfq
 function rfqKeyOf(l){ return reqKey((l.takeoff_line || l.item || '') + '|' + (l.category||'')); }
 // A line a person has pushed the other way. Kept with the comparison so it survives a reload
 // and comes back on any computer: it is a decision, not a preference.
@@ -4633,11 +4672,44 @@ function whyNoPrice(l){
   }
   return 'No price anybody will stand behind.';
 }
+function selOf(list){ return list === 'buy' ? selBuy : selRfq; }
+function selToggle(list, key, on){ const m = selOf(list); if(on) m[key] = true; else delete m[key]; renderSelCount(list); }
+function selCount(list){ return Object.keys(selOf(list)).length; }
+function selAll(list, cat, on){
+  const bs = buildBuySheet(); if(!bs) return;
+  (bs.lines||[]).filter(l=>lineList(l) === list)
+    .filter(l=>!cat || (l.category||'Other') === cat)
+    .forEach(l=>{ const k = rfqKeyOf(l); if(on) selOf(list)[k] = true; else delete selOf(list)[k]; });
+  renderBuySheet();
+}
+function selMove(list){
+  const bs = buildBuySheet(); if(!bs) return;
+  const keys = Object.keys(selOf(list));
+  if(!keys.length) return;
+  const to = list === 'buy' ? 'rfq' : 'buy';
+  const m = manualMoves();
+  keys.forEach(k=>{ m[k] = to; });
+  if(list === 'buy') selBuy = {}; else selRfq = {};
+  saveToCloud('p2_comparison', cmpData);
+  renderBuySheet();
+}
+function renderSelCount(list){
+  const el = document.getElementById(list === 'buy' ? 'buySelMsg' : 'rfqMsg');
+  if(!el) return;
+  const n = selCount(list);
+  el.textContent = n ? (n + ' line' + (n===1?'':'s') + ' selected') : 'Nothing selected.';
+}
+// A header checkbox for a whole category, so a section can be taken in one click.
+function catBox(list, cat){
+  return '<label style="font-weight:400;font-size:12px;cursor:pointer">'+
+    '<input type="checkbox" onchange="selAll('+JSON.stringify(list).replace(/"/g,'&quot;')+', '+
+      JSON.stringify(cat).replace(/"/g,'&quot;')+', this.checked)" onclick="event.stopPropagation()"> select all</label>';
+}
 function buildRfq(){
   const bs = buildBuySheet();
   if(!bs) return null;
   const lines = (bs.lines||[]).filter(l=>lineList(l) === 'rfq');
-  lines.forEach(l=>{ const k = rfqKeyOf(l); if(!(k in rfqPicked)) rfqPicked[k] = true; });
+  // Deliberately nothing pre-ticked. A tick is an instruction now, not a convenience.
   const byCat = {};
   lines.forEach(l=>{ const c = l.category || 'Other'; (byCat[c] = byCat[c] || []).push(l); });
   return { lines, byCat, all: bs.lines||[],
@@ -4645,22 +4717,13 @@ function buildRfq(){
     blocked: lines.filter(l=>l.state!=='nobody').length,
     movedHere: lines.filter(l=>manualMoves()[rfqKeyOf(l)]==='rfq').length };
 }
-function rfqSelectAll(on){
-  const r = buildRfq(); if(!r) return;
-  r.lines.forEach(l=>{ rfqPicked[rfqKeyOf(l)] = !!on; });
-  renderRfq();
-}
-function rfqToggle(k, on){ rfqPicked[k] = !!on; renderRfqCount(); }
+function rfqSelectAll(on){ selAll('rfq', null, on); }
+function rfqToggle(k, on){ selToggle('rfq', k, on); }
 function rfqSelected(){
   const r = buildRfq();
-  return r ? r.lines.filter(l=>rfqPicked[rfqKeyOf(l)]) : [];
+  return r ? r.lines.filter(l=>selRfq[rfqKeyOf(l)]) : [];
 }
-function renderRfqCount(){
-  const el = document.getElementById('rfqMsg');
-  if(!el) return;
-  const n = rfqSelected().length;
-  el.textContent = n ? (n + ' line' + (n===1?'':'s') + ' ticked to go out') : 'Nothing ticked.';
-}
+function renderRfqCount(){ renderSelCount('rfq'); }
 function tradeChip(t){
   const cls = t.mine === true ? 'exact' : t.mine === false ? 'miss' : 'unclear';
   return '<span class="mm '+cls+'">'+esc(t.trade)+'</span>' +
@@ -4685,10 +4748,10 @@ function renderRfq(){
     Object.keys(r.byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
       const rows = r.byCat[cat];
       return '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
-        '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+'</span></div>'+
+        '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+' &middot; '+catBox('rfq', cat)+'</span></div>'+
         '<div class="collapsible-body" style="display:block">'+
         '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-        '<th style="width:44px">Send</th><th style="min-width:240px">Item</th><th style="width:110px">Quantity</th>'+
+        '<th style="width:44px"></th><th style="min-width:240px">Item</th><th style="width:110px">Quantity</th>'+
         '<th style="width:150px">Trade</th><th style="min-width:230px">Why it is here</th>'+
         '<th style="width:120px"></th></tr></thead><tbody>'+
         rows.map(l=>{
@@ -4698,7 +4761,8 @@ function renderRfq(){
               ' onchange="rfqToggle('+JSON.stringify(k).replace(/"/g,'&quot;')+', this.checked)"></td>'+
             '<td><div class="itemdesc">'+esc(l.takeoff_line || l.item || '')+'</div>'+
               (l.spec_model?'<div class="itemsub">'+esc(l.spec_model)+'</div>':'')+
-              '<div class="itemsub">'+esc(l.source ? l.source.label : '')+'</div></td>'+
+              '<div class="itemsub">'+esc(l.source ? l.source.label : '')+'</div>'+
+              lookChip(l)+'</td>'+
             '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
             '<td>'+tradeChip(l.trade)+'</td>'+
             '<td class="why">'+esc(whyNoPrice(l))+
@@ -4710,6 +4774,95 @@ function renderRfq(){
         }).join('')+'</tbody></table></div></div></div>';
     }).join('');
   renderRfqCount();
+}
+// Worth a look first. Not a fourth list to work through - a short strip at the top saying
+// which lines a person should put their eyes on before trusting any of this, and why. Four
+// kinds: the trade is not certain, it is plainly another trade's work, the library match is
+// shaky, or the supplier prices disagree so badly they cannot be the same item.
+function needsLookGroups(){
+  const bs = buildBuySheet();
+  if(!bs) return null;
+  const lines = bs.lines || [];
+  const g = {
+    // The one that worries you, and rightly. It has a price beside it so it reads as handled,
+    // but no supplier has agreed to supply anything: the number is what it costs you, not an
+    // offer. Left unchecked, that is an assumption sitting quietly on a buy sheet.
+    noQuote:     lines.filter(l=>lineList(l)==='buy' && !l.offers.some(o=>o.price!==null) && l.libPriced),
+    unsureTrade: lines.filter(l=>l.trade && l.trade.mine === null),
+    otherTrade:  lines.filter(l=>l.trade && l.trade.mine === false),
+    shakyLib:    lines.filter(l=>lineList(l)==='buy' && l.libPriced && l.lib.confidence === 'low'
+                                 && !l.offers.some(o=>o.price!==null)),
+    outliers:    lines.filter(l=>priceSanity(l._row).outliers.length)
+  };
+  // Every flagged line, so the flag can follow it into the buy sheet and the RFQ rather than
+  // living only on a panel somebody might never open.
+  g.keys = {};
+  const mark = (list, why) => list.forEach(l=>{
+    const k = rfqKeyOf(l);
+    (g.keys[k] = g.keys[k] || []).push(why);
+  });
+  mark(g.noQuote, 'nobody quoted this');
+  mark(g.unsureTrade, 'trade not certain');
+  mark(g.otherTrade, 'reads as another trade');
+  mark(g.shakyLib, 'weak library match');
+  mark(g.outliers, 'prices cannot be the same item');
+  // One line flagged for two reasons is still one line to look at.
+  g.total = Object.keys(g.keys).length;
+  return g;
+}
+// The flag follows the line. A panel at the top is no use to somebody working down two hundred
+// rows: it has to be visible on the row itself, at the moment they are looking at it.
+let _lookKeys = null;
+function lookKeys(){
+  if(_lookKeys) return _lookKeys;
+  const g = needsLookGroups();
+  _lookKeys = (g && g.keys) || {};
+  return _lookKeys;
+}
+function lookChip(l){
+  const why = lookKeys()[rfqKeyOf(l)];
+  if(!why || !why.length) return '';
+  return '<div style="margin-top:3px"><span class="mm miss">LOOK</span> '+
+    '<span class="why" style="display:inline">'+esc(why.join('; '))+'</span></div>';
+}
+function renderNeedsLook(){
+  const out = document.getElementById('lookOut');
+  const card = document.getElementById('lookCard');
+  if(!out || !card) return;
+  const g = needsLookGroups();
+  if(!g || !g.total){ card.style.display='none'; out.innerHTML=''; return; }
+  card.style.display = 'block';
+  const block = (title, tone, list, what, why) => !list.length ? '' :
+    '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(title)+'</span>'+
+      '<span class="c">'+list.length+' line'+(list.length===1?'':'s')+'</span></div>'+
+    '<div class="collapsible-body" style="display:block">'+
+      '<div class="note '+tone+'" style="margin-top:0">'+why+'</div>'+
+      '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:250px">Item</th>'+
+      '<th style="width:140px">Trade</th><th style="width:110px">List</th><th>'+esc(what)+'</th></tr></thead><tbody>'+
+      list.slice(0,60).map(l=>'<tr><td><div class="itemdesc">'+esc(l.takeoff_line||l.item||'')+'</div>'+
+        '<div class="itemsub">'+esc(l.category||'')+'</div></td>'+
+        '<td>'+tradeChip(l.trade)+'</td>'+
+        '<td><span class="mm '+(lineList(l)==='buy'?'exact':'unclear')+'">'+(lineList(l)==='buy'?'BUY':'RFQ')+'</span></td>'+
+        '<td class="why">'+esc(
+          list === g.outliers ? priceSanity(l._row).outliers.map(o=>o.supplier+' at '+money(o.unit)+', '+o.why).join('; ')
+          : list === g.shakyLib ? ('matched "'+String(l.lib.description).slice(0,60)+'" on a low confidence, and that is the only price on this line')
+          : (l.trade && l.trade.why) || ''
+        )+'</td></tr>').join('')+
+      (list.length>60 ? '<tr><td colspan="4" class="itemsub">and '+(list.length-60)+' more</td></tr>' : '')+
+      '</tbody></table></div></div></div>';
+  out.innerHTML =
+    '<div class="note warn" style="margin-top:0"><b>'+g.total+' line'+(g.total===1?'':'s')+' worth putting your eyes on before you trust the two lists below.</b> '+
+      'Nothing here is wrong on its own &mdash; these are the places where the tool is least sure, gathered up so you do not have to hunt for them.</div>'+
+    block('Nobody quoted these: the only price is your own', 'err', g.noQuote, 'What it is priced from',
+      'These have a price beside them, so they read as handled. They are not. No supplier has offered anything: that figure is what the item costs you, not a commitment from anybody to supply it at that price. Decide whether you are content to carry them, or move them to the RFQ and get somebody to quote them.')+
+    block('The trade is not certain', 'warn', g.unsureTrade, 'Why it could not be settled',
+      'No spec section number, and the wording does not settle whose work this is. If it is not yours, move it to the RFQ or drop it.')+
+    block('Reads as another trade', 'warn', g.otherTrade, 'How it was read',
+      'The spec section or the wording says this belongs to mechanical, electrical or fire. Worth a glance before you price or quote it.')+
+    block('Priced only off a shaky library match', 'warn', g.shakyLib, 'What it matched',
+      'Nobody quoted these, so the only price is from your own list, and the match itself is weak. A wrong match here puts a wrong price straight on the buy sheet.')+
+    block('Supplier prices that cannot be the same item', 'err', g.outliers, 'What is out of line',
+      'One supplier is wildly away from the others on the same line. That is evidence of a bad match, not a bargain, and the odd one is already kept out of the numbers.');
 }
 // What can be bought: every line with a price somebody will stand behind, from a supplier or
 // from your own library. No recommendation is made here. The prices are laid out and a person
@@ -4735,20 +4888,23 @@ function renderBuyList(){
     Object.keys(byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
       const rows = byCat[cat];
       return '<div class="grp cmp-sec">'+HEAD+'<span class="t">'+esc(cat)+'</span>'+
-        '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+'</span></div>'+
+        '<span class="c">'+rows.length+' line'+(rows.length===1?'':'s')+' &middot; '+catBox('buy', cat)+'</span></div>'+
         '<div class="collapsible-body" style="display:block">'+
         '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-        '<th style="min-width:230px">Item</th><th style="width:105px">Quantity</th><th style="width:140px">Trade</th>'+
+        '<th style="width:44px"></th><th style="min-width:230px">Item</th><th style="width:105px">Quantity</th><th style="width:140px">Trade</th>'+
         names.map(n=>'<th class="supcol" style="width:130px">'+esc(n)+'</th>').join('')+
         '<th class="supcol libcol" style="width:140px">Your library</th>'+
-        '<th style="width:120px"></th></tr></thead><tbody>'+
+        '</tr></thead><tbody>'+
         rows.map(l=>{
           const k = rfqKeyOf(l);
           const moved = manualMoves()[k] === 'buy';
           return '<tr'+(moved?' class="hasissue"':'')+'>'+
+            '<td><input type="checkbox" '+(selBuy[k]?'checked':'')+
+              ' onchange="selToggle(\'buy\', '+JSON.stringify(k).replace(/"/g,'&quot;')+', this.checked)"></td>'+
             '<td><div class="itemdesc">'+esc(l.takeoff_line || l.item || '')+'</div>'+
               (l.spec_model?'<div class="itemsub">'+esc(l.spec_model)+'</div>':'')+
-              (moved?'<div class="why">you moved this here</div>':'')+'</td>'+
+              (moved?'<div class="why">you moved this here</div>':'')+
+              lookChip(l)+'</td>'+
             '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
             '<td>'+tradeChip(l.trade)+'</td>'+
             names.map(n=>{
@@ -4765,8 +4921,7 @@ function renderBuyList(){
                 '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
                   esc(l.lib.confidence)+' match</span> '+esc(String(l.lib.description).slice(0,44))+'</div>'
               : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>'+
-            '<td><button class="btn2" type="button" onclick="moveLine('+JSON.stringify(k).replace(/"/g,'&quot;')+', '+
-              (moved?'\'auto\'':'\'rfq\'')+')">'+(moved?'Put it back':'Move to RFQ')+'</button></td></tr>';
+            '</tr>';
         }).join('')+'</tbody></table></div></div></div>';
     }).join('');
 }
@@ -4921,8 +5076,13 @@ function renderBuySheet(){
   box.innerHTML = html;
   const blc = document.getElementById('buyListCard');
   if(blc) blc.style.display = (cmpData && (cmpData.rows||[]).length) ? 'block' : 'none';
+  const oldRollup = document.getElementById('buyResults');
+  if(oldRollup) oldRollup.style.display = 'none';
+  _lookKeys = null;
+  renderNeedsLook();
   renderBuyList();
   renderRfq();
+  renderSelCount('buy'); renderSelCount('rfq');
 }
 function downloadBuyExcel(btn){
   const bs = buildBuySheet();
