@@ -484,7 +484,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B36</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B37</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -4826,11 +4826,40 @@ function lineList(l){
   if(m === 'rfq' || m === 'buy') return m;
   return l.havePrice ? 'buy' : 'rfq';
 }
+const REASON_TAGS = [
+  [/could not work out which of their lines/i, 'NO MATCH'],
+  [/but it is a guess/i,                       'LOW CONFIDENCE'],
+  [/different product instead/i,               'SUBSTITUTION'],
+  [/multiplier/i,                              'MULTIPLIER'],
+  [/list price, not your net|priced off list/i,'LIST PRICE'],
+  [/no usable number/i,                        'NO PRICE'],
+  [/quoted in .* against a takeoff in/i,       'UNITS DIFFER'],
+  [/per assembly/i,                            'PER ASSEMBLY'],
+  [/plus shipping/i,                           'PLUS SHIPPING'],
+  [/does not say whether its price/i,          'QTY BASIS'],
+  [/probably not the same item/i,              'PRICE OUT OF LINE'],
+];
+function reasonTag(text){
+  const t = String(text||'');
+  for(const [re, tag] of REASON_TAGS) if(re.test(t)) return tag;
+  return 'CHECK';
+}
+// The tag on screen, the whole sentence on hover. Both, so nothing is lost and nothing has
+// to be read at speed.
+function reasonChip(text){
+  if(!text) return '';
+  return '<span class="mm unclear" title="'+esc(text)+'">'+esc(reasonTag(text))+'</span>';
+}
+function reasonChips(list){
+  const seen = {}, out = [];
+  (list||[]).forEach(t=>{ const g = reasonTag(t); if(seen[g]) return; seen[g] = true; out.push(reasonChip(t)); });
+  return out.join(' ');
+}
 // Plain words. "Not comparable" told nobody anything.
 function whyNoPrice(l){
   if(l.state === 'nobody') return 'Nobody quoted it, and it is not in your price list.';
   if(l.blockers && l.blockers.length){
-    return 'It was quoted, but the price cannot be used as it stands: ' + l.blockers.join('; ') + '.';
+    return 'Quoted, but not usable as it stands: ' + Array.from(new Set(l.blockers.map(reasonTag))).join(', ') + '.';
   }
   return 'No price anybody will stand behind.';
 }
@@ -4919,7 +4948,7 @@ function renderRfq(){
   out.innerHTML =
     '<div class="note warn" style="margin-top:0"><b>'+r.lines.length+' line'+(r.lines.length===1?' has':'s have')+' no price anywhere.</b> '+
       r.nobody+' nobody quoted and your library does not have'+(r.nobody===1?' it':' them')+
-      (r.blocked ? (', and '+r.blocked+' were quoted but the price cannot be used as it stands') : '')+
+      (r.blocked ? (', and '+r.blocked+' were quoted but not usable as they stand') : '')+
       (r.movedHere ? ('. '+r.movedHere+' of these you moved here yourself.') : '.')+
       ' Anything your library can price is on the buy sheet above, not here.</div>'+
     Object.keys(r.byCat).sort((a,b)=>CATEGORIES.indexOf(a)-CATEGORIES.indexOf(b)).map(cat=>{
@@ -5162,7 +5191,16 @@ function renderQuoteHealth(){
       '<b>Never placed</b> &mdash; lines they quoted that we could not find a home for. These are worth chasing: the money is already on their quote.<br>'+
       '<b>Price we can use</b> &mdash; matched lines where the price stands on its own, with no question against it.<br>'+
       '<b>Price to check</b> &mdash; matched lines where there is a number but something is off. The number is still shown on the buy sheet, in red, with the reason.<br>'+
-      '<b>Most common reason</b> &mdash; the one thing that stopped the most prices being used outright.')+
+      '<b>Most common reason</b> &mdash; the one thing that stopped the most prices being used outright. Hover any tag for the full sentence.<br><br>'+
+      '<b>NO QUOTE</b> they did not quote this line at all.<br>'+
+      '<b>NO MATCH</b> they quoted something, we could not tell which of your lines it goes with.<br>'+
+      '<b>LOW CONFIDENCE</b> we matched it, but it is a guess.<br>'+
+      '<b>SUBSTITUTION</b> they offered a different product.<br>'+
+      '<b>NO PRICE</b> their line carries no usable number.<br>'+
+      '<b>MULTIPLIER</b> their quote has a multiplier that has not been worked in.<br>'+
+      '<b>LIST PRICE</b> list, not your net price.<br>'+
+      '<b>UNITS DIFFER</b> quoted per foot against a takeoff in each, or the other way round.<br>'+
+      '<b>PRICE OUT OF LINE</b> so far from the others that it cannot be the same item.')+
     '<div class="tablewrap dashtable"><table class="matrix"><thead><tr>'+
       '<th style="width:16%">Supplier</th>'+
       '<th style="width:12%">Lines on their quote</th>'+
@@ -5179,7 +5217,7 @@ function renderQuoteHealth(){
           '<td class="qtybox">'+b.unplaced+'</td>'+
           '<td class="qtybox">'+b.used+'</td>'+
           '<td class="qtybox">'+b.questioned+'</td>'+
-          '<td class="why">'+(top ? (esc(top)+' &mdash; '+b.reasons[top]+' line'+(b.reasons[top]===1?'':'s')) : '')+'</td></tr>';
+          '<td>'+(top ? (reasonChip(top)+' <span class="itemsub">'+b.reasons[top]+' line'+(b.reasons[top]===1?'':'s')+'</span>') : '')+'</td></tr>';
       }).join('')+
       '</tbody></table></div>';
 
@@ -5415,11 +5453,10 @@ function buyCell(o){
     (o.price_note ? '<div class="why">'+esc(o.price_note)+'</div>' : '')+'</td>';
   if(o.quoted_price !== null) return '<td class="supcell">'+
     '<div class="pricebox flagged">'+money(o.quoted_price)+'</div>'+
-    '<span class="mm unclear">CHECK</span>'+
-    '<div class="why">'+esc(o.blocked[0]||'')+'</div>'+
+    reasonChips(o.blocked)+
     (o.quoted_note ? '<div class="why">'+esc(o.quoted_note)+'</div>' : '')+'</td>';
   return '<td class="supcell"><span class="mm miss">NO PRICE</span>'+
-    (o.blocked.length ? '<div class="why">'+esc(o.blocked[0])+'</div>' : '')+'</td>';
+    (o.blocked.length ? '<div style="margin-top:3px">'+reasonChips(o.blocked)+'</div>' : '')+'</td>';
 }
 function renderBuyList(){
   const out = document.getElementById('buyListOut');
@@ -5644,7 +5681,7 @@ function renderBuySheet(){
           '<td><div class="itemdesc">'+esc(l.takeoff_line)+'</div>'+
             '<div class="itemsub">'+[l.tag, (l.required_qty? l.required_qty+' '+l.required_uom : 'no quantity')].filter(Boolean).map(esc).join(' · ')+'</div></td>'+
           '<td><span class="st '+st[0]+'">'+st[1]+'</span>'+
-            (l.blockers.length?'<div class="why">'+esc(l.blockers.slice(0,2).join('; '))+(l.blockers.length>2?'…':'')+'</div>':'')+'</td>'+
+            (l.blockers.length?'<div style="margin-top:3px">'+reasonChips(l.blockers)+'</div>':'')+'</td>'+
           bs.names.map(n=>{
             const o = l.offers.find(x=>x.supplier===n);
             if(!o || o.match==='missing') return '<td class="supcell"><span class="mm miss">MISSING</span></td>';
@@ -5652,7 +5689,7 @@ function renderBuySheet(){
               (o.price!==null ? '<div class="qtybox" style="font-size:13px">'+money(o.price)+'</div><div class="itemsub">'+esc(o.price_note)+'</div>'
                               : '<span class="mm '+(o.match==='substitution'?'sub':'unclear')+'">'+(o.match==='substitution'?'SUB':'no price')+'</span>')+
               '<div style="margin-top:3px">'+qtyCellHtml(o,l)+'</div>'+
-              (o.blocked.length?'<div class="why">'+esc(o.blocked[0])+'</div>':'')+
+              (o.blocked.length?'<div style="margin-top:3px">'+reasonChips(o.blocked)+'</div>':'')+
             '</td>';
           }).join('')+
           (!libraryColumnActive() ? libNotHereCell() : (function(){
