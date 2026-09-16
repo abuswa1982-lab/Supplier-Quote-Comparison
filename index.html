@@ -242,6 +242,7 @@
   .itemsub{font-size:11.5px;color:var(--muted);margin-top:2px;font-family:var(--mono)}
   .qtybox{font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap}
   .pricebox{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+.pricebox.flagged{color:var(--rust)}
   .mm{display:inline-block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:3px;margin-bottom:3px}
   .mm.exact{background:var(--green-tint);color:#215A3B;border:1px solid #BFDCC9}
   .mm.equiv{background:var(--blue-tint);color:#16304B;border:1px solid #CBDDEE}
@@ -471,7 +472,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B32</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B33</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -617,7 +618,7 @@
   <!-- ============================ TAB 6: BUY SHEET & RFQ ============================ -->
   <div id="page-buy" style="display:none">
     <div class="note info">
-      <b>Two halves of one question: for every line, is there a price worth standing behind?</b> Where there is, it is on the buy sheet with the reason it can be trusted. Where there is not, it drops into the RFQ list to go back out for quoting. Nothing on this tab is asked of the AI: every figure is arithmetic done in the browser from what is already on screen, so you can check any of it by hand.
+      <b>Priced anywhere &rarr; buy sheet. Priced nowhere &rarr; out for quoting.</b> That is the whole rule. Every figure here is arithmetic done in the browser, so you can check any of it by hand.
     </div>
     <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 5.</p></div>
     <div class="card" id="healthCard" style="display:none">
@@ -636,7 +637,7 @@
     </div>
     <div class="card" id="buyListCard" style="display:none">
       <h2>What we can buy</h2>
-      <p class="hint" style="margin:0 0 10px">Every line with a price behind it, from a supplier or from your own price list. Prices sit side by side and nothing is recommended &mdash; you decide where to buy. Tick anything you would not stand behind and move it across; it goes out for quoting instead.</p>
+      <p class="hint" style="margin:0 0 10px">Every line somebody put a price on. A price in red with <b>CHECK</b> means the number is real but something about it needs your eye &mdash; the reason is under it. Nothing is recommended. Tick anything you would not stand behind and send it out for quoting.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <button class="btn2 primary" type="button" onclick="downloadBuySheet()">Download buy sheet</button>
         <button class="btn2" type="button" onclick="selAll('buy', null, true)">Select all</button>
@@ -652,7 +653,7 @@
     <div id="buyResults" style="display:none"></div>
     <div class="card" id="rfqCard" style="display:none">
       <h2>Still needs a quote</h2>
-      <p class="hint" style="margin:0 0 10px">Every line with no price anybody will stand behind: nobody quoted it, or what was quoted could not be compared. Tick what you want to send out and it comes off as an Excel RFQ. This costs nothing and asks nothing of the AI.</p>
+      <p class="hint" style="margin:0 0 10px">Every line with no number on it from anybody, ours included. Tick what you want to send out and it comes off as an Excel RFQ.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <button class="btn2" type="button" onclick="selAll('rfq', null, true)">Select all</button>
         <button class="btn2" type="button" onclick="selAll('rfq', null, false)">Clear</button>
@@ -4332,7 +4333,8 @@ function renderCompare(){
         (flags.length ? '<div class="scflag">'+esc(flags.join(' · '))+'</div>' : '')+
       '</div>';
     }).join('')+'</div>'+
-    (libraryColumnActive() ? (function(){
+    (!libraryColumnActive() ? '<div class="note err"><b>Your price list is not on this computer, so the library column cannot price anything.</b> '+
+      'The price list lives on the machine that imported it, not inside this file. Open the <b>Library</b> tab and press <b>Pull from the database</b> &mdash; that needs the Worker URL in Setup and nothing else. No API key is involved.</div>' : (function(){
       const rows = cmpData.rows||[];
       let hit = 0, priced = 0;
       rows.forEach(r=>{ const m = libraryOffer(r); if(m){ hit++; if(m.price) priced++; } });
@@ -4344,7 +4346,7 @@ function renderCompare(){
              : 'Nothing matched at all, which is worth looking at rather than accepting: open the Library tab and check that the sheet has a description column mapped, because if it has not, there is nothing sensible to match on.')+
         (noPriceCol && hit ? ' <b>No price column is mapped on your library sheets</b>, so the column can say what an item is but not what it costs. Set that under "What each column means" on the Library tab.' : '')+
       '</div>';
-    })() : (libIndex.length ? '<div class="note warn"><b>Your library is loaded but is not being used here.</b> Run the comparison again and it will appear as an extra column.</div>' : ''))+
+    })())+
     '<div class="note warn"><b>These totals are not yet comparable to each other.</b> Each one is only the sum of what that supplier actually put on paper. A cheaper number nearly always has a reason sitting in the exceptions list, so clear those first, then compare.</div>';
   }
 
@@ -4411,7 +4413,7 @@ function renderCompare(){
         '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:230px">Item</th>'+
         '<th class="supcol" style="min-width:150px">Source &amp; trade</th>'+
         names.map(n=>'<th class="supcol" style="min-width:190px">'+esc(n)+'</th>').join('')+
-        (libraryColumnActive()?'<th class="supcol libcol" style="min-width:190px">Your library</th>':'')+
+        '<th class="supcol libcol" style="min-width:190px">Your library</th>'+
         '</tr></thead><tbody>'+
         rows.map(r=>{
           const cells = names.map(n=>{
@@ -4424,7 +4426,7 @@ function renderCompare(){
               (price ? '<div class="pricebox">'+price+'</div>' : '')+
               (c.why ? '<div class="why">'+esc(c.why)+'</div>' : '')+
             '</td>';
-          }).join('') + (libraryColumnActive() ? libCellHtml(r) : '');
+          }).join('') + (libraryColumnActive() ? libCellHtml(r) : libNotHereCell());
           return '<tr'+((r.issues||[]).length?' class="hasissue"':'')+'><td>'+
             '<div class="itemdesc">'+esc(r.takeoff_line || r.item)+'</div>'+
             '<div class="itemsub">'+[r.tag, r.spec_model, (r.required_qty? (r.required_qty+' '+(r.required_uom||'')) : ''), r.required_source].filter(Boolean).map(esc).join(' · ')+'</div>'+
@@ -4561,6 +4563,27 @@ function supplierBlockers(sup, row){
   }
   return out;
 }
+// The number this supplier actually put on paper, worked to our quantity where that can be
+// done safely. Computed for EVERY offer, blocked or not. A price that exists must never
+// disappear off the buy sheet - it gets shown with the reason it is shaky sitting next to it,
+// because a number with a warning on it is worth something and a blank cell is worth nothing.
+function quotedFigure(o, reqQty, reqU, reqUomLabel){
+  const oU = uomKey(o.uom);
+  // Different units: do not extend, that is arithmetic across things that are not the same.
+  // Show it exactly as they wrote it and say so.
+  if(oU && reqU && oU !== reqU){
+    if(o.extended_price) return { price:o.extended_price, note:'as quoted, for '+(o.qty||'?')+' '+(o.uom||'') };
+    if(o.unit_price)     return { price:o.unit_price,     note:'their unit price, per '+(o.uom||'') };
+    return { price:null, note:'' };
+  }
+  if(reqQty && o.qty === reqQty && o.extended_price) return { price:o.extended_price, note:'as quoted' };
+  if(reqQty && o.unit_price) return { price:o.unit_price * reqQty,
+    note:(o.qty === reqQty ? 'as quoted' : 'their unit price extended to our '+reqQty+' '+(reqUomLabel||'')) };
+  if(o.extended_price && (!reqQty || o.qty === reqQty)) return { price:o.extended_price, note:'as quoted' };
+  if(o.extended_price && o.qty) return { price:(o.extended_price / o.qty) * reqQty,
+    note:'worked back from their extended price to our '+reqQty+' '+(reqUomLabel||'') };
+  return { price:null, note:'' };
+}
 function buildBuySheet(){
   if(!cmpData || !(cmpData.rows||[]).length) return null;
   const read = suppliers.filter(s=>s.data);
@@ -4576,7 +4599,8 @@ function buildBuySheet(){
       const sup = byName[n];
       const o = { supplier:n, match:c.match||'missing', confidence:c.confidence||'', quoted_as:c.quoted_as||'',
                   qty:num(c.qty), uom:c.uom||'', unit_price:num(c.unit_price), extended_price:num(c.extended_price),
-                  why:c.why||'', blocked:[], qty_state:'', qty_delta:0, price:null, price_note:'' };
+                  why:c.why||'', blocked:[], qty_state:'', qty_delta:0, price:null, price_note:'',
+                  quoted_price:null, quoted_note:'' };
       if(o.match === 'missing'){ o.qty_state = 'not quoted'; return o; }
 
       // quantity check, and it refuses to subtract across units that do not mean the same thing
@@ -4595,16 +4619,15 @@ function buildBuySheet(){
       if(o.qty_state === 'units differ') o.blocked.push('quoted in '+(o.uom||'?')+' against a takeoff in '+(row.required_uom||'?'));
       if(sup) supplierBlockers(sup, row).forEach(bk=>o.blocked.push(bk));
 
-      // a price that can stand next to another price, extended to the takeoff quantity where
-      // that can be done safely and labelled when it has been
-      if(!o.blocked.length && (oU === reqU || (!reqQty && o.extended_price))){
-        if(reqQty && o.qty === reqQty && o.extended_price){ o.price = o.extended_price; o.price_note = 'as quoted'; }
-        else if(reqQty && o.unit_price){ o.price = o.unit_price * reqQty; o.price_note = (o.qty===reqQty?'as quoted':'their unit price extended to our '+reqQty+' '+(row.required_uom||'')); }
-        else if(o.extended_price && (!reqQty || o.qty === reqQty)){ o.price = o.extended_price; o.price_note = 'as quoted'; }
-        else if(o.extended_price && o.qty){ o.price = (o.extended_price / o.qty) * reqQty; o.price_note = 'worked back from their extended price to our '+reqQty+' '+(row.required_uom||''); }
-        else o.blocked.push('no usable price on the line');
-      }
-      if(o.price !== null && !(o.price > 0)){ o.price = null; o.blocked.push('no usable price on the line'); }
+      // What they printed, always worked out. Then, separately, whether it is clean enough to
+      // stand next to another supplier's number. The two are not the same question and running
+      // them together is what emptied the buy sheet.
+      const qf = quotedFigure(o, reqQty, reqU, row.required_uom);
+      o.quoted_price = (qf.price > 0) ? qf.price : null;
+      o.quoted_note = qf.note;
+      if(o.quoted_price === null) o.blocked.push('they put no usable number on this line');
+      o.price = o.blocked.length ? null : o.quoted_price;
+      o.price_note = o.price === null ? '' : qf.note;
       return o;
     });
 
@@ -4621,7 +4644,7 @@ function buildBuySheet(){
           o.blocked.push(ratio >= OUTLIER_HIGH
             ? ('this price is '+(Math.round(ratio*10)/10)+' times the others on this line, so it is probably not the same item')
             : ('this price is '+(Math.round((1/ratio)*10)/10)+' times below the others on this line, so it is probably not the same item'));
-          o.price = null;
+          o.price = null;   // out of the arithmetic, still on the screen with the reason
         }
       });
     }
@@ -4642,7 +4665,11 @@ function buildBuySheet(){
     // counts - it is shown with its confidence so an unconvincing one is obvious, and one
     // button moves it to the RFQ if you do not believe it.
     const libPriced = !!(lib && lib.price > 0);
-    const havePrice = priced.length > 0 || libPriced;
+    // Any number at all puts the line on the buy sheet: a clean price, a shaky one with a
+    // warning, or our own library. Only a line where nobody anywhere put a figure goes out
+    // for quoting. A low confidence price is still a price - it is shown, and it is labelled.
+    const flagged = offers.filter(o=>o.price === null && o.quoted_price !== null);
+    const havePrice = priced.length > 0 || libPriced || flagged.length > 0;
 
     const sorted = priced.slice().sort((a,b)=>a.price-b.price);
     const low = sorted[0] || null, high = sorted[sorted.length-1] || null;
@@ -4651,7 +4678,7 @@ function buildBuySheet(){
       tag:row.tag||'', spec_model:row.spec_model||'',
       required_qty:reqQty, required_uom:row.required_uom||'', required_source:row.required_source||'',
       offers, state, blockers, low, high, spread,
-      lib, libPriced, havePrice,
+      lib, libPriced, havePrice, flagged,
       trade: rowTrade(row), source: rowSource(row), _row: row,
       spread_pct: (low && spread) ? (spread/low.price*100) : 0 };
   });
@@ -5206,12 +5233,7 @@ function renderNeedsLook(){
         '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
         '<td>'+tradeChip(l.trade)+'</td>'+
         '<td><span class="mm '+(lineList(l)==='buy'?'exact':'unclear')+'">'+(lineList(l)==='buy'?'BUY':'RFQ')+'</span></td>'+
-        names.map(n=>{
-          const o = (l.offers||[]).find(x=>x.supplier===n);
-          if(!o || o.price === null) return '<td class="supcell"><span class="mm miss">'+
-            (o && o.match!=='missing' ? 'CANNOT USE' : 'NOT QUOTED')+'</span></td>';
-          return '<td class="supcell"><div class="pricebox">'+money(o.price)+'</div></td>';
-        }).join('')+
+        names.map(n=>buyCell((l.offers||[]).find(x=>x.supplier===n))).join('')+
         '<td class="supcell libcell">'+(l.libPriced
           ? '<div class="pricebox">'+money(l.lib.price*(l.required_qty||1))+'</div>'+
             '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
@@ -5242,6 +5264,21 @@ function renderNeedsLook(){
 // What can be bought: every line with a price somebody will stand behind, from a supplier or
 // from your own library. No recommendation is made here. The prices are laid out and a person
 // decides - the tool has no business telling an estimator where to buy.
+// One supplier's cell on the buy sheet. The rule is simple and it is the one that was broken:
+// if they printed a number, the number is on screen. A clean price stands on its own; a shaky
+// one is shown with CHECK and the reason. Blank only when they genuinely did not quote it.
+function buyCell(o){
+  if(!o || o.match === 'missing') return '<td class="supcell"><span class="mm miss">NOT QUOTED</span></td>';
+  if(o.price !== null) return '<td class="supcell"><div class="pricebox">'+money(o.price)+'</div>'+
+    (o.price_note ? '<div class="why">'+esc(o.price_note)+'</div>' : '')+'</td>';
+  if(o.quoted_price !== null) return '<td class="supcell">'+
+    '<div class="pricebox flagged">'+money(o.quoted_price)+'</div>'+
+    '<span class="mm unclear">CHECK</span>'+
+    '<div class="why">'+esc(o.blocked[0]||'')+'</div>'+
+    (o.quoted_note ? '<div class="why">'+esc(o.quoted_note)+'</div>' : '')+'</td>';
+  return '<td class="supcell"><span class="mm miss">NO PRICE</span>'+
+    (o.blocked.length ? '<div class="why">'+esc(o.blocked[0])+'</div>' : '')+'</td>';
+}
 function renderBuyList(){
   const out = document.getElementById('buyListOut');
   if(!out) return;
@@ -5282,20 +5319,14 @@ function renderBuyList(){
               lookChip(l)+'</td>'+
             '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
             '<td>'+tradeChip(l.trade)+'</td>'+
-            names.map(n=>{
-              const o = l.offers.find(x=>x.supplier===n);
-              if(!o || o.price === null) return '<td class="supcell"><span class="mm miss">'+
-                (o && o.match!=='missing' ? 'CANNOT USE' : 'NOT QUOTED')+'</span>'+
-                (o && o.blocked && o.blocked.length ? '<div class="why">'+esc(o.blocked[0])+'</div>' : '')+'</td>';
-              return '<td class="supcell"><div class="pricebox">'+money(o.price)+'</div>'+
-                '<div class="why">'+esc(o.price_note||'')+'</div></td>';
-            }).join('')+
-            '<td class="supcell libcell">'+(l.libPriced
+            names.map(n=>buyCell(l.offers.find(x=>x.supplier===n))).join('')+
+            (!libraryColumnActive() ? libNotHereCell() :
+             '<td class="supcell libcell">'+(l.libPriced
               ? '<div class="pricebox">'+money(l.lib.price * (l.required_qty||1))+'</div>'+
                 '<div class="why">'+money(l.lib.price)+(l.lib.uom?(' / '+esc(l.lib.uom)):'')+' &mdash; your cost, not an offer</div>'+
                 '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
                   esc(l.lib.confidence)+' match</span> '+esc(String(l.lib.description).slice(0,44))+'</div>'
-              : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>'+
+              : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>')+
             '</tr>';
         }).join('')+'</tbody></table></div></div></div>';
     }).join('');
@@ -5463,7 +5494,7 @@ function renderBuySheet(){
       '<div class="tablewrap"><table class="matrix"><thead><tr>'+
         '<th style="min-width:200px">Takeoff line</th><th style="width:120px">State</th>'+
         bs.names.map(n=>'<th class="supcol" style="min-width:150px">'+esc(n)+'</th>').join('')+
-        (libraryColumnActive()?'<th class="supcol libcol" style="min-width:150px">Your library</th>':'')+
+        '<th class="supcol libcol" style="min-width:150px">Your library</th>'+
         '<th class="supcol" style="width:160px">Low / high / spread</th></tr></thead><tbody>'+
       rows.map(l=>{
         const st = BUY_STATE[l.state];
@@ -5482,7 +5513,7 @@ function renderBuySheet(){
               (o.blocked.length?'<div class="why">'+esc(o.blocked[0])+'</div>':'')+
             '</td>';
           }).join('')+
-          (libraryColumnActive() ? (function(){
+          (!libraryColumnActive() ? libNotHereCell() : (function(){
             const m = libraryOffer({ takeoff_line:l.takeoff_line, item:l.item, spec_model:l.spec_model||'' });
             if(!m) return '<td class="supcell libcell"><span class="mm miss">NOT IN LIBRARY</span></td>';
             const mine = m.price ? m.price * (l.required_qty || 1) : 0;
@@ -5493,7 +5524,7 @@ function renderBuySheet(){
               (vs !== null ? '<div class="lowhigh"><span class="'+(vs>0?'sp':'lo')+'">'+(vs>0?('+'+vs):vs)+'%</span> vs the cheapest quote</div>' : '')+
               (m.confidence!=='high'?'<div class="conf">'+esc(m.confidence)+' confidence match</div>':'')+
             '</td>';
-          })() : '')+
+          })())+
           '<td class="supcell">'+(l.low
             ? '<div class="lowhigh"><span class="lo">'+money(l.low.price)+'</span> '+esc(l.low.supplier)+'</div>'+
               (l.high && l.spread ? '<div class="lowhigh"><span class="hi">'+money(l.high.price)+'</span> '+esc(l.high.supplier)+'</div>'+
@@ -6650,6 +6681,13 @@ function libraryOffer(row){
   return m;
 }
 function libraryColumnActive(){ return libIndex.length > 0 && libLoadedAll; }
+// The column is always drawn. Whether it can price anything is a different question, and the
+// answer to it belongs in the cells where somebody can read it, not in a missing column.
+function libraryColumnShown(){ return true; }
+function libNotHereCell(){
+  return '<td class="supcell libcell"><span class="mm miss">NO PRICE LIST</span>'+
+    '<div class="why">your price list is not on this computer. Library tab &rarr; Pull from the database.</div></td>';
+}
 function libCellHtml(row){
   const m = libraryOffer(row);
   if(!m) return '<td class="supcell libcell"><span class="mm miss">NOT IN LIBRARY</span>'+
