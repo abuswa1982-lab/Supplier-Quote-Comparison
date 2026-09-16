@@ -243,6 +243,18 @@
   .qtybox{font-family:var(--mono);font-size:12px;font-weight:600;white-space:nowrap}
   .pricebox{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
 .pricebox.flagged{color:var(--rust)}
+.helpb{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;margin-left:7px;
+  padding:0;border:1px solid var(--line);border-radius:50%;background:#fff;color:var(--ink);
+  font:700 12px/1 system-ui,sans-serif;cursor:pointer;vertical-align:middle}
+.helpb:hover{background:var(--navy);border-color:var(--navy);color:#fff}
+.helpbox{margin:8px 0 10px;padding:10px 13px;border-left:3px solid var(--navy);background:#F4F7FA;
+  border-radius:0 5px 5px 0;font-size:13.5px;line-height:1.5;color:var(--ink)}
+.helpbox b{font-weight:700}
+.drillrow{cursor:pointer}
+.drillrow:hover{background:#EEF3F8}
+.drillrow.on{background:#E3ECF5;font-weight:600}
+.dashtable table.matrix{table-layout:fixed;width:100%;min-width:0}
+.dashtable td,.dashtable th{white-space:normal;word-break:break-word}
   .mm{display:inline-block;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:3px;margin-bottom:3px}
   .mm.exact{background:var(--green-tint);color:#215A3B;border:1px solid #BFDCC9}
   .mm.equiv{background:var(--blue-tint);color:#16304B;border:1px solid #CBDDEE}
@@ -472,7 +484,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B34</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B36</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -680,14 +692,14 @@
       <p class="hint">Read straight off the grid: the first row that looks like headings becomes the column names and everything under it becomes rows. Nothing is interpreted, nothing is reworded, nothing is dropped. If a sheet has a title block above the headings it gets skipped automatically, and you can change which row is the heading afterwards.</p>
     </div>
     <div class="card">
-      <h2>Keep it in the database</h2>
-      <p class="hint" style="margin:0 0 10px">The price list is not about one job &mdash; it is yours, it applies to every job that comes in, and it can hold as many sheets as you want to put in it. Stored here it sits under its own name in the same database as everything else, so it comes back on any computer and on any project. The copy on this computer stays as well, because matching has to be instant and free.</p>
+      <h2>What gets kept, and what does not</h2>
+      <p class="hint" style="margin:0 0 10px"><b>The prices are not kept.</b> A price list is reissued about every week, so a stored copy is out of date almost immediately and the only thing it can do is get somebody to bid off last month's numbers. Re-reading the spreadsheet takes about a second and costs nothing, so each computer opens the current one.<br><br><b>What is kept is the part you cannot download again:</b> the shorthand you have taught it, and which column on each sheet is the description, the part number and the price. That is a few kilobytes, it belongs to every job, and it is the only bit that represents work somebody did by hand.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn2 primary" onclick="libPushToCloud(this)" type="button">Send this library to the database</button>
-        <button class="btn2" onclick="libPullFromCloud(this)" type="button">Bring it down from the database</button>
+        <button class="btn2 primary" onclick="libPushToCloud(this)" type="button">Save the shorthand and settings</button>
+        <button class="btn2" onclick="libPullFromCloud(this)" type="button">Bring them down on this computer</button>
         <span class="hint" id="libCloudMsg" style="margin:0"></span>
       </div>
-      <p class="hint" style="margin:10px 0 0">Nothing here goes near the AI and nothing is charged: this only moves rows that have already been read off your spreadsheet.</p>
+      <p class="hint" style="margin:10px 0 0">Nothing here goes near the AI and nothing is charged. On a computer that has never seen the price list: press <b>Bring them down</b> first, then drop the current spreadsheet in above &mdash; the columns will already be mapped.</p>
     </div>
     <div class="card">
       <h2>Teach it your shorthand</h2>
@@ -998,54 +1010,63 @@ async function libPushToCloud(btn){
   if(btn){ btn.disabled = true; btn.textContent = 'Sending…'; }
   if(msg){ msg.style.color = ''; msg.textContent = ''; }
   try{
-    const manifest = { sheets: [], at: new Date().toISOString() };
+    // What went up in earlier builds: every row of the price list, in eight hundred row
+    // parts. Clear those out so they are not sitting in the database going stale, and so
+    // nobody's computer pulls a price list from three weeks ago and bids off it.
+    let cleared = 0;
+    try{
+      const old = await loadProjectRows(LIBRARY_PROJECT);
+      const om = old.lib_manifest ? JSON.parse(old.lib_manifest.data) : null;
+      for(const sh of ((om && om.sheets) || [])){
+        for(let i=0;i<(sh.chunks||0);i++){
+          if(!old[libChunkKey(sh.id, i)]) continue;
+          if(msg) msg.textContent = 'Clearing an old stored copy of ' + sh.name + '…';
+          await saveToProject(LIBRARY_PROJECT, libChunkKey(sh.id, i), { rows: [] });
+          cleared++;
+        }
+      }
+    }catch(e){ /* nothing stored yet, or unreachable - neither stops what follows */ }
+
+    // The settings for each sheet, and nothing else. No rows. A few hundred bytes.
+    const manifest = { sheets: [], at: new Date().toISOString(), rows_stored: false };
     for(const ix of libIndex){
       const rec = await libGet(ix.id);
       if(!rec) continue;
-      const chunks = Math.max(1, Math.ceil((rec.rows||[]).length / LIB_CHUNK));
-      for(let i=0;i<chunks;i++){
-        if(msg) msg.textContent = 'Sending ' + rec.name + ', part ' + (i+1) + ' of ' + chunks + '…';
-        await saveToProject(LIBRARY_PROJECT, libChunkKey(rec.id, i),
-          { rows: (rec.rows||[]).slice(i*LIB_CHUNK, (i+1)*LIB_CHUNK) });
-      }
       manifest.sheets.push({ id:rec.id, name:rec.name, file:rec.file, sheet:rec.sheet,
         cols:rec.cols, roles:rec.roles||{}, header_row:rec.header_row,
-        rows:(rec.rows||[]).length, chunks:chunks, imported_at:rec.imported_at,
+        rows:(rec.rows||[]).length, chunks:0, imported_at:rec.imported_at,
         use: rec.use !== false });
     }
+    if(msg) msg.textContent = 'Sending the settings…';
     await saveToProject(LIBRARY_PROJECT, 'lib_manifest', manifest);
-    // Send the shorthand as well. "Send this library to the database" has to mean all of it,
-    // and the shorthand is the half that cannot be downloaded again from a supplier.
+
+    // The shorthand. This is the part worth keeping: a price list can be downloaded again
+    // from the supply house and this cannot be got back from anywhere.
     const vocabN = Object.keys(LIB_VOCAB).length;
     if(vocabN){
       if(msg) msg.textContent = 'Sending the shorthand…';
       await saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta });
     }
-    // Read it straight back. "It said it saved" is not the same as "it is in there", and this
-    // is the only claim in the tool where being wrong costs a whole re-import.
-    let verified = null;
+
+    // Read it straight back. "It said it saved" is not the same as "it is in there".
+    let ok = false, vocabBack = 0;
     try{
       const back = await loadProjectRows(LIBRARY_PROJECT);
-      const m2 = back.lib_manifest ? JSON.parse(back.lib_manifest.data) : null;
-      let chunksThere = 0, chunksWanted = 0;
-      (m2 && m2.sheets || []).forEach(sh=>{
-        chunksWanted += sh.chunks;
-        for(let i=0;i<sh.chunks;i++) if(back[libChunkKey(sh.id, i)]) chunksThere++;
-      });
-      verified = { sheets: (m2 && m2.sheets || []).length, chunksThere, chunksWanted };
+      ok = !!back.lib_manifest;
+      if(back.lib_vocab){ try{ vocabBack = Object.keys(JSON.parse(back.lib_vocab.data).vocab||{}).length; }catch(e){} }
     }catch(e){ /* the send itself succeeded; only the read-back failed */ }
-    if(verified && verified.chunksThere < verified.chunksWanted){
+
+    if(vocabN && ok && vocabBack < vocabN){
       if(msg){ msg.style.color = '#B4451F';
-        msg.textContent = 'Only ' + verified.chunksThere + ' of ' + verified.chunksWanted +
-          ' parts made it into the database. Try again on a steadier connection before relying on this.'; }
+        msg.textContent = 'The settings saved but only ' + vocabBack + ' of ' + vocabN +
+          ' pieces of shorthand came back. Try again before relying on this.'; }
       return;
     }
-    const total = manifest.sheets.reduce((a,x)=>a+x.rows,0);
-    if(msg) msg.textContent = manifest.sheets.length + ' sheet' + (manifest.sheets.length===1?'':'s') +
-      ', ' + total.toLocaleString() + ' rows' +
-      (vocabN ? (', and ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand') : '') +
-      ', now in the database' + (verified ? ' and read back to check it is really there' : '') +
-      '. It will come back on any computer, on any job.';
+    if(msg) msg.textContent = manifest.sheets.length + ' sheet setting' + (manifest.sheets.length===1?'':'s') +
+      (vocabN ? (' and ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand') : '') +
+      ' saved' + (ok ? ' and read back to check' : '') + '. ' +
+      (cleared ? ('Cleared ' + cleared + ' stored part' + (cleared===1?'':'s') + ' of the old price list out of the database. ') : '') +
+      'The prices themselves are not stored — open the current spreadsheet on each computer.';
   }catch(e){
     if(msg){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
   }finally{ if(btn){ btn.disabled = false; btn.textContent = o; } }
@@ -1058,61 +1079,63 @@ async function libPullFromCloud(btn, quiet){
   if(msg && !quiet){ msg.style.color = ''; msg.textContent = ''; }
   try{
     const latest = await loadProjectRows(LIBRARY_PROJECT);
-    if(!latest.lib_manifest){
-      if(msg && !quiet) msg.textContent = 'Nothing is stored in the database yet. Send what is on this computer up first.';
-      return 0;
-    }
-    const manifest = JSON.parse(latest.lib_manifest.data);
-    let added = 0;
-    const trouble = [];
-    for(const sh of (manifest.sheets||[])){
-      let rows = [];
-      let missing = 0;
-      for(let i=0;i<sh.chunks;i++){
-        const r = latest[libChunkKey(sh.id, i)];
-        if(!r){ missing++; continue; }
-        try{ rows = rows.concat((JSON.parse(r.data).rows)||[]); }
-        catch(e){ missing++; }
-      }
-      if(missing) trouble.push('"'+sh.name+'" is listed with '+sh.rows+' rows in '+sh.chunks+
-        ' parts, but '+missing+' of those parts are not in the database. Send the library up again from the computer that has it.');
-      if(!rows.length) continue;
-      await libPut({ id:sh.id, name:sh.name, file:sh.file, sheet:sh.sheet, cols:sh.cols,
-        rows:rows, header_row:sh.header_row, imported_at:sh.imported_at,
-        roles:sh.roles||{}, use: sh.use !== false });
-      delete libCache[sh.id];
-      added++;
-    }
-    // The shorthand it has been taught travels with the price list: it is the more valuable
-    // half, because a price list can be downloaded again and this cannot.
+    let vocabN = 0, sheetsKnown = 0, adopted = 0;
+
+    // The shorthand. This is the whole point of the trip.
     if(latest.lib_vocab){
       try{
         const v = JSON.parse(latest.lib_vocab.data);
         libApplyVocab(v.vocab||{});
         libVocabMeta = v.meta || null;
-      }catch(e){ /* a damaged vocabulary must not stop the rows arriving */ }
+        vocabN = Object.keys(LIB_VOCAB).length;
+      }catch(e){ /* a damaged vocabulary must not stop the rest */ }
     }
+
+    // The column mapping, so nobody has to work out which column is the price a second time.
+    // It is only taken up by a sheet on this computer that has not been mapped yet - it never
+    // overwrites a choice somebody made here.
+    if(latest.lib_manifest){
+      try{
+        const m = JSON.parse(latest.lib_manifest.data);
+        LIB_CLOUD_SHEETS = (m.sheets||[]);
+        sheetsKnown = LIB_CLOUD_SHEETS.length;
+        for(const ix of libIndex){
+          const rec = await libGet(ix.id);
+          if(!rec) continue;
+          if(rec.roles && Object.keys(rec.roles).length) continue;
+          const match = LIB_CLOUD_SHEETS.find(sh=>
+            (sh.file && rec.file && String(sh.file).toLowerCase() === String(rec.file).toLowerCase()) ||
+            (sh.name && rec.name && String(sh.name).toLowerCase() === String(rec.name).toLowerCase()));
+          if(!match || !match.roles || !Object.keys(match.roles).length) continue;
+          rec.roles = match.roles;
+          await libPut(rec);
+          delete libCache[rec.id];
+          adopted++;
+        }
+      }catch(e){ /* a damaged manifest must not stop the shorthand arriving */ }
+    }
+
     libIdx = {}; libRowCache = {}; libLoadedAll = false;
     await libRefreshIndex();
     renderLibrary(); updateCounts();
-    if(trouble.length && msg && !quiet){
-      msg.style.color = '#B4451F';
-      msg.textContent = trouble.join(' ');
-      if(!added) return 0;
+
+    if(msg && !quiet){
+      if(!vocabN && !sheetsKnown){
+        msg.textContent = 'Nothing is saved in the database yet.';
+      }else{
+        msg.textContent = vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand' +
+          (sheetsKnown ? (' and settings for ' + sheetsKnown + ' sheet' + (sheetsKnown===1?'':'s')) : '') +
+          ' brought down' + (adopted ? (', and the column mapping filled in on ' + adopted + ' sheet' + (adopted===1?'':'s') + ' here') : '') + '. ' +
+          (libIndex.length ? '' : 'The prices are not stored in the database — drop the current price list spreadsheet in above.');
+      }
     }
-    const rowsIn = (manifest.sheets||[]).reduce((a,x)=>a+(x.rows||0),0);
-    const vocabN = Object.keys(LIB_VOCAB).length;
-    if(msg && !quiet) msg.textContent = added + ' sheet' + (added===1?'':'s') + ', ' + rowsIn.toLocaleString() +
-      ' rows' + (vocabN ? (', and ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand') : '') +
-      ', brought down onto this computer.' +
-      (added < (manifest.sheets||[]).length ? ' ' + ((manifest.sheets||[]).length - added) +
-        ' sheet(s) in the manifest had no rows stored and were skipped.' : '');
-    return added;
+    return vocabN;
   }catch(e){
     if(msg && !quiet){ msg.textContent = e.message; msg.style.color = '#B4451F'; }
     return 0;
   }finally{ if(btn){ btn.disabled = false; btn.textContent = o; } }
 }
+
 async function saveToCloud(phase, data){
   const url = workerUrl(), project = projectName();
   if(!project || !url){
@@ -4222,6 +4245,16 @@ function covBadge(v){
   return '<span class="mm '+p[0]+'">'+p[1]+'</span>';
 }
 const HEAD  = '<div class="grp-h collapsible-head open" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i>';
+function helpBtn(id){
+  return '<button class="helpb" type="button" title="What this means" onclick="toggleHelp(\'' + id + '\')">?</button>';
+}
+function helpBox(id, html){
+  return '<div class="helpbox" id="help-'+id+'" style="display:none">'+html+'</div>';
+}
+function toggleHelp(id){
+  const e = document.getElementById('help-'+id);
+  if(e) e.style.display = (e.style.display === 'none') ? 'block' : 'none';
+}
 const HEADC = '<div class="grp-h collapsible-head" onclick="toggleCollapse(this)"><i class="chev">&#9662;</i>';
 function setAllCmpSections(open){
   document.querySelectorAll('#cmpResults .cmp-sec > .grp-h').forEach(h=>{
@@ -4334,7 +4367,7 @@ function renderCompare(){
       '</div>';
     }).join('')+'</div>'+
     (!libraryColumnActive() ? '<div class="note err"><b>Your price list is not on this computer, so the library column cannot price anything.</b> '+
-      'The price list lives on the machine that imported it, not inside this file. Open the <b>Library</b> tab and press <b>Pull from the database</b> &mdash; that needs the Worker URL in Setup and nothing else. No API key is involved.</div>' : (function(){
+      'The price list is not stored in the database and it is not inside this file &mdash; it is reissued every week, so each computer opens the current spreadsheet. Go to the <b>Library</b> tab, press <b>Bring them down</b> to get the shorthand and the column mapping, then drop the current price list spreadsheet in. Takes about a second. No API key is involved.</div>' : (function(){
       const rows = cmpData.rows||[];
       let hit = 0, priced = 0;
       rows.forEach(r=>{ const m = libraryOffer(r); if(m){ hit++; if(m.price) priced++; } });
@@ -4549,8 +4582,8 @@ function supplierBlockers(sup, row){
   const out = [];
   const d = sup.data || {};
   const m = d.quote_meta || {};
-  if((m.multiplier||'').trim()) out.push('a multiplier applies to this quote and has not been applied');
-  if(m.price_basis === 'list') out.push('this quote is list pricing, not net');
+  if((m.multiplier||'').trim()) out.push('their quote has a multiplier on it that has not been worked into these prices');
+  if(m.price_basis === 'list') out.push('this quote is list price, not your net price');
   const tag = String(row.tag||'').trim().toLowerCase();
   if(tag){
     const g = (d.groups||[]).find(x=>String(x.tag||'').trim().toLowerCase()===tag);
@@ -4613,9 +4646,9 @@ function buildBuySheet(){
       else if(o.qty > reqQty){ o.qty_state = 'over'; o.qty_delta = o.qty - reqQty; }
       else o.qty_state = 'ok';
 
-      if(o.match === 'substitution') o.blocked.push('this is a substitution, so it is not the same product');
-      if(o.match === 'unclear') o.blocked.push('what this line covers could not be established');
-      if(o.confidence === 'low') o.blocked.push('the match itself is low confidence');
+      if(o.match === 'substitution') o.blocked.push('they offered a different product instead of the one asked for');
+      if(o.match === 'unclear') o.blocked.push('we could not work out which of their lines goes with this takeoff line');
+      if(o.confidence === 'low') o.blocked.push('we matched it to one of their lines but it is a guess');
       if(o.qty_state === 'units differ') o.blocked.push('quoted in '+(o.uom||'?')+' against a takeoff in '+(row.required_uom||'?'));
       if(sup) supplierBlockers(sup, row).forEach(bk=>o.blocked.push(bk));
 
@@ -4980,7 +5013,7 @@ function quoteHealth(){
   return { lines: lines.length, names, bySupplier,
     comparable: comparable.length, questioned: questioned.length,
     libOnly: libOnly.length, nothing: nothing.length, libConf: conf,
-    nothingByCat: tally(cat), nothingByTrade: tally(trade),
+    nothingByCat: tally(cat), nothingByTrade: tally(trade), nothingLines: nothing,
     quoteLines: bySupplier.reduce((a,b)=>a+b.onQuote, 0),
     quotePlaced: bySupplier.reduce((a,b)=>a+b.placed, 0),
     dupes: duplicateLines() };
@@ -5087,6 +5120,14 @@ function lookSelect(kind){
   g[kind].forEach(l=>{ selOf(lineList(l))[rfqKeyOf(l)] = true; });
   keepPlace(renderBuySheet);
 }
+// Which slice of "nobody quoted this" the reader has clicked into. Nothing is hidden by it -
+// it only narrows what is listed underneath.
+let healthDrill = { trade:null, cat:null };
+function healthPick(kind, value){
+  if(healthDrill[kind] === value) healthDrill[kind] = null; else healthDrill[kind] = value;
+  if(kind === 'trade') healthDrill.cat = null;
+  keepPlace(renderQuoteHealth);
+}
 function renderQuoteHealth(){
   const out = document.getElementById('healthOut');
   const card = document.getElementById('healthCard');
@@ -5096,15 +5137,14 @@ function renderQuoteHealth(){
   card.style.display = 'block';
   const pc = (a,b) => b ? Math.round(a/b*100) : 0;
 
-  const priced = h.comparable + h.questioned;
   const head =
-    '<div class="note '+(priced ? 'info' : 'err')+'" style="margin-top:0">'+
+    '<div class="note '+((h.comparable+h.questioned) ? 'info' : 'err')+'" style="margin-top:0">'+
       '<b>'+h.lines+' takeoff lines.</b> '+
-      h.comparable+' have a price you can put next to another price. '+
-      h.questioned+' have a price with a question on it. '+
-      h.libOnly+' have only your own library. '+
-      h.nothing+' have nothing from anybody.'+
-      '<div class="why" style="margin-top:6px">Counted as lines, not quantities. One takeoff line is one line here whether it is a single floor drain or four hundred feet of pipe.</div>'+
+      h.comparable+' priced by a supplier. '+
+      h.questioned+' priced by a supplier but something needs checking. '+
+      h.libOnly+' priced only from your own list. '+
+      h.nothing+' not priced by anybody.'+
+      '<div class="why" style="margin-top:6px">Lines, not quantities. One line is one line whether it is one floor drain or 400 feet of pipe.</div>'+
     '</div>';
 
   const sec = (title, count, body) =>
@@ -5112,59 +5152,116 @@ function renderQuoteHealth(){
       '<span class="c">'+esc(count)+' &middot; click to open</span></div>'+
     '<div class="collapsible-body" style="display:none">'+body+'</div></div>';
 
-  // The fair measure, and the one that actually points at work worth doing.
+  // ---------------------------------------------------------------- what was on each quote
   const supTable =
-    '<div class="note info" style="margin-top:0">A supply house prices what you asked them for, not your whole takeoff. '+
-      'So the question is not how much of the job they missed &mdash; it is how many lines were on <b>their</b> quote, and how many of those we managed to tie to a takeoff line. '+
-      'The ones we could not tie are the work: the money is already on the quote.</div>'+
-    '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-      '<th style="min-width:170px">Supplier</th>'+
-      '<th style="width:130px">Lines on their quote</th>'+
-      '<th style="width:140px">We tied to the takeoff</th>'+
-      '<th style="width:130px">Never placed</th>'+
-      '<th style="width:120px">Price usable</th>'+
-      '<th style="min-width:260px">Biggest thing in the way</th></tr></thead><tbody>'+
+    '<p class="hint" style="margin:0 0 8px">Each quote measured against itself, not against your takeoff.'+
+      helpBtn('sup')+'</p>'+
+    helpBox('sup',
+      '<b>Lines on their quote</b> &mdash; how many priced lines the supplier actually sent.<br>'+
+      '<b>We tied to your takeoff</b> &mdash; how many of those we could match to one of your lines.<br>'+
+      '<b>Never placed</b> &mdash; lines they quoted that we could not find a home for. These are worth chasing: the money is already on their quote.<br>'+
+      '<b>Price we can use</b> &mdash; matched lines where the price stands on its own, with no question against it.<br>'+
+      '<b>Price to check</b> &mdash; matched lines where there is a number but something is off. The number is still shown on the buy sheet, in red, with the reason.<br>'+
+      '<b>Most common reason</b> &mdash; the one thing that stopped the most prices being used outright.')+
+    '<div class="tablewrap dashtable"><table class="matrix"><thead><tr>'+
+      '<th style="width:16%">Supplier</th>'+
+      '<th style="width:12%">Lines on their quote</th>'+
+      '<th style="width:13%">We tied to your takeoff</th>'+
+      '<th style="width:11%">Never placed</th>'+
+      '<th style="width:11%">Price we can use</th>'+
+      '<th style="width:10%">Price to check</th>'+
+      '<th style="width:27%">Most common reason</th></tr></thead><tbody>'+
       h.bySupplier.map(b=>{
         const top = Object.keys(b.reasons).sort((x,y)=>b.reasons[y]-b.reasons[x])[0];
         return '<tr><td><div class="itemdesc">'+esc(b.supplier)+'</div></td>'+
           '<td class="qtybox">'+b.onQuote+'</td>'+
-          '<td class="qtybox">'+b.placed+(b.onQuote?(' <span class="itemsub">('+pc(b.placed,b.onQuote)+'%)</span>'):'')+'</td>'+
+          '<td class="qtybox">'+b.placed+(b.onQuote?(' <span class="itemsub">'+pc(b.placed,b.onQuote)+'%</span>'):'')+'</td>'+
           '<td class="qtybox">'+b.unplaced+'</td>'+
-          '<td class="qtybox">'+b.used+(b.questioned?(' <span class="itemsub">+'+b.questioned+' with a question</span>'):'')+'</td>'+
-          '<td class="why">'+(top ? esc(top)+' &times; '+b.reasons[top] : '')+'</td></tr>';
+          '<td class="qtybox">'+b.used+'</td>'+
+          '<td class="qtybox">'+b.questioned+'</td>'+
+          '<td class="why">'+(top ? (esc(top)+' &mdash; '+b.reasons[top]+' line'+(b.reasons[top]===1?'':'s')) : '')+'</td></tr>';
       }).join('')+
       '</tbody></table></div>';
 
-  // How much of "nobody quoted this" is even ours.
-  const nothingTable = !h.nothing ? '' :
-    '<div class="note info" style="margin-top:0">These are takeoff lines with no number on them from anybody. Before treating that as a hole in the bid, check how much of it is your trade at all.</div>'+
-    '<div style="display:flex;gap:26px;flex-wrap:wrap">'+
-    '<div class="tablewrap" style="flex:1;min-width:280px"><table class="matrix"><thead><tr><th>Trade</th><th style="width:90px">Lines</th><th style="width:90px">Share</th></tr></thead><tbody>'+
-      h.nothingByTrade.map(r=>'<tr><td>'+esc(r.k)+'</td><td class="qtybox">'+r.n+'</td><td class="qtybox">'+pc(r.n,h.nothing)+'%</td></tr>').join('')+
-      '</tbody></table></div>'+
-    '<div class="tablewrap" style="flex:1;min-width:280px"><table class="matrix"><thead><tr><th>Category</th><th style="width:90px">Lines</th><th style="width:90px">Share</th></tr></thead><tbody>'+
-      h.nothingByCat.map(r=>'<tr><td>'+esc(r.k)+'</td><td class="qtybox">'+r.n+'</td><td class="qtybox">'+pc(r.n,h.nothing)+'%</td></tr>').join('')+
-      '</tbody></table></div></div>';
+  // ---------------------------------------------------------------- nobody quoted it
+  const dt = healthDrill.trade, dc = healthDrill.cat;
+  let picked = h.nothingLines;
+  if(dt) picked = picked.filter(l=>((l.trade && l.trade.trade) || 'Not sure') === dt);
+  if(dc) picked = picked.filter(l=>(l.category||'Other') === dc);
+  // the categories shown are the ones inside whatever trade is selected
+  const catsIn = {};
+  (dt ? h.nothingLines.filter(l=>((l.trade&&l.trade.trade)||'Not sure') === dt) : h.nothingLines)
+    .forEach(l=>{ const c = l.category||'Other'; catsIn[c] = (catsIn[c]||0)+1; });
+  const catRows = Object.keys(catsIn).map(k=>({k:k,n:catsIn[k]})).sort((x,y)=>y.n-x.n);
 
+  const nothingTable = !h.nothing ? '' :
+    '<p class="hint" style="margin:0 0 8px">Takeoff lines nobody put a number on. Click a trade, then a category, to see them.'+
+      helpBtn('nq')+'</p>'+
+    helpBox('nq',
+      'Before you treat this as a hole in the bid, check whose work it is. A line that reads as mechanical or electrical is not yours to price. '+
+      'Anything left that <b>is</b> plumbing is a real gap and belongs on the RFQ below.<br><br>'+
+      'Click a trade to narrow the categories. Click a category to list the lines. Click the same one again to clear it.')+
+    '<div style="display:flex;gap:18px;flex-wrap:wrap">'+
+    '<div class="tablewrap dashtable" style="flex:1 1 260px"><table class="matrix"><thead><tr>'+
+      '<th style="width:56%">Trade</th><th style="width:22%">Lines</th><th style="width:22%">Share</th></tr></thead><tbody>'+
+      h.nothingByTrade.map(r=>'<tr class="drillrow'+(dt===r.k?' on':'')+'" onclick="healthPick(\'trade\','+JSON.stringify(r.k).replace(/"/g,'&quot;')+')">'+
+        '<td>'+esc(r.k)+'</td><td class="qtybox">'+r.n+'</td><td class="qtybox">'+pc(r.n,h.nothing)+'%</td></tr>').join('')+
+      '</tbody></table></div>'+
+    '<div class="tablewrap dashtable" style="flex:1 1 260px"><table class="matrix"><thead><tr>'+
+      '<th style="width:56%">Category'+(dt?(' in '+esc(dt)):'')+'</th><th style="width:22%">Lines</th><th style="width:22%">Share</th></tr></thead><tbody>'+
+      catRows.map(r=>'<tr class="drillrow'+(dc===r.k?' on':'')+'" onclick="healthPick(\'cat\','+JSON.stringify(r.k).replace(/"/g,'&quot;')+')">'+
+        '<td>'+esc(r.k)+'</td><td class="qtybox">'+r.n+'</td><td class="qtybox">'+pc(r.n,h.nothing)+'%</td></tr>').join('')+
+      '</tbody></table></div></div>'+
+    ((dt||dc) ?
+      '<div style="margin-top:12px">'+
+        '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">'+
+          '<b>'+picked.length+' line'+(picked.length===1?'':'s')+'</b>'+
+          '<span class="hint" style="margin:0">'+esc([dt,dc].filter(Boolean).join(' · '))+'</span>'+
+          '<button class="btn2" type="button" onclick="healthPick(\''+(dc?'cat':'trade')+'\','+JSON.stringify(dc||dt).replace(/"/g,'&quot;')+')">Clear</button>'+
+          '<button class="btn2" type="button" onclick="healthSelectDrill()">Tick these on the RFQ list below</button>'+
+        '</div>'+
+        '<div class="tablewrap dashtable"><table class="matrix"><thead><tr>'+
+          '<th style="width:52%">Takeoff line</th><th style="width:16%">Quantity</th>'+
+          '<th style="width:16%">Category</th><th style="width:16%">Trade</th></tr></thead><tbody>'+
+          picked.slice(0,80).map(l=>'<tr><td><div class="itemdesc">'+esc(l.takeoff_line||l.item||'')+'</div>'+
+            (l.spec_model?'<div class="itemsub">'+esc(l.spec_model)+'</div>':'')+'</td>'+
+            '<td class="qtybox">'+(l.required_qty?esc(String(l.required_qty)):'')+' '+esc(l.required_uom||'')+'</td>'+
+            '<td>'+esc(l.category||'')+'</td><td>'+tradeChip(l.trade)+'</td></tr>').join('')+
+          (picked.length>80 ? '<tr><td colspan="4" class="itemsub">and '+(picked.length-80)+' more</td></tr>' : '')+
+          '</tbody></table></div></div>'
+      : '<p class="hint" style="margin:10px 0 0">Click a trade above to see what is in it.</p>');
+
+  // ---------------------------------------------------------------- where each price came from
   const c = h.libConf;
   const standTable =
-    '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-      '<th style="min-width:340px">Where the price on that line came from</th><th style="width:90px">Lines</th><th style="width:90px">Share</th>'+
+    '<p class="hint" style="margin:0 0 8px">Every takeoff line, sorted by what its price rests on.'+helpBtn('st')+'</p>'+
+    helpBox('st',
+      'A supplier price stands on its own when it was matched cleanly and the units line up.<br>'+
+      'A price <b>to check</b> is a real number with something against it &mdash; a substitution, a shaky match, a multiplier not worked in. It is on the buy sheet in red.<br>'+
+      'A library price is <b>your own cost</b>, not an offer from anybody. A <b>low</b> confidence one is a guess with a price attached &mdash; treat it as unpriced until somebody looks.')+
+    '<div class="tablewrap dashtable"><table class="matrix"><thead><tr>'+
+      '<th style="width:64%">What the price on that line rests on</th><th style="width:18%">Lines</th><th style="width:18%">Share</th>'+
       '</tr></thead><tbody>'+
-      '<tr><td>A supplier quoted it and the price stands on its own</td><td class="qtybox">'+h.comparable+'</td><td class="qtybox">'+pc(h.comparable,h.lines)+'%</td></tr>'+
-      '<tr><td>A supplier quoted it but something needs checking &mdash; shown in red with CHECK</td><td class="qtybox">'+h.questioned+'</td><td class="qtybox">'+pc(h.questioned,h.lines)+'%</td></tr>'+
-      '<tr><td>Your own library, <b>high</b> confidence match</td><td class="qtybox">'+c.high+'</td><td class="qtybox">'+pc(c.high,h.lines)+'%</td></tr>'+
-      '<tr><td>Your own library, <b>medium</b> confidence</td><td class="qtybox">'+c.medium+'</td><td class="qtybox">'+pc(c.medium,h.lines)+'%</td></tr>'+
-      '<tr><td>Your own library, <b>low</b> confidence &mdash; a guess with a price on it</td><td class="qtybox">'+c.low+'</td><td class="qtybox">'+pc(c.low,h.lines)+'%</td></tr>'+
-      '<tr><td>No price from anywhere &mdash; these are the RFQ list</td><td class="qtybox">'+h.nothing+'</td><td class="qtybox">'+pc(h.nothing,h.lines)+'%</td></tr>'+
+      [['A supplier quoted it and the price stands on its own', h.comparable],
+       ['A supplier quoted it but it needs checking &mdash; red, on the buy sheet', h.questioned],
+       ['Your own list, <b>high</b> confidence match', c.high],
+       ['Your own list, <b>medium</b> confidence', c.medium],
+       ['Your own list, <b>low</b> confidence &mdash; a guess with a price on it', c.low],
+       ['Nobody priced it &mdash; this is the RFQ list', h.nothing]]
+      .map(r=>'<tr><td>'+r[0]+'</td><td class="qtybox">'+r[1]+'</td><td class="qtybox">'+pc(r[1],h.lines)+'%</td></tr>').join('')+
       '</tbody></table></div>';
 
+  // ---------------------------------------------------------------- counted twice
   const dupeCount = h.dupes.reduce((a,g)=>a+g.length, 0);
   const dupeBody = !h.dupes.length ? '' : sec(
     'The same item counted more than once', h.dupes.length+' item'+(h.dupes.length===1?'':'s')+', '+dupeCount+' lines',
-    '<div class="note err" style="margin-top:0">The same item written twice on the same drawing, or once with a sheet number and once without. The same material on two different drawings is <b>not</b> counted here &mdash; that is two real lines.</div>'+
-    '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:340px">The lines that read the same</th>'+
-      '<th style="width:110px">Category</th><th style="width:110px">Qty each</th></tr></thead><tbody>'+
+    '<p class="hint" style="margin:0 0 8px">The same item written twice.'+helpBtn('dp')+'</p>'+
+    helpBox('dp',
+      'Two lines count as the same item when they read identically once the sheet number is taken off the front &mdash; <b>P101_SK-2</b> and <b>SK-2</b>.<br>'+
+      'The same material on <b>two different drawings</b> is not counted here. <b>P100_SAN US 4"</b> and <b>P101_SAN US 4"</b> are two real lines.<br><br>'+
+      'Each copy gets its own price, so a real duplicate is bought twice.')+
+    '<div class="tablewrap dashtable"><table class="matrix"><thead><tr><th style="width:60%">The lines that read the same</th>'+
+      '<th style="width:20%">Category</th><th style="width:20%">Qty each</th></tr></thead><tbody>'+
       h.dupes.slice(0,40).map(grp=>'<tr><td>'+grp.map(l=>'<div class="itemdesc">'+esc(l.takeoff_line||l.item||'')+'</div>').join('')+
         '</td><td>'+esc(grp[0].category||'')+'</td><td class="qtybox">'+
         grp.map(l=>esc(String(l.required_qty||'')+' '+(l.required_uom||''))).join('<br>')+'</td></tr>').join('')+
@@ -5177,6 +5274,17 @@ function renderQuoteHealth(){
     (nothingTable ? sec('What nobody quoted, and whose trade it is', h.nothing+' lines', nothingTable) : '') +
     sec('Where each price came from', h.lines+' lines', standTable) +
     dupeBody;
+}
+// Tick whatever the reader has drilled into, on the RFQ list below. Saves hunting the same
+// lines back down by hand, which is the friction that makes a panel get ignored.
+function healthSelectDrill(){
+  const h = quoteHealth();
+  if(!h) return;
+  let picked = h.nothingLines;
+  if(healthDrill.trade) picked = picked.filter(l=>((l.trade && l.trade.trade) || 'Not sure') === healthDrill.trade);
+  if(healthDrill.cat)   picked = picked.filter(l=>(l.category||'Other') === healthDrill.cat);
+  picked.forEach(l=>{ selOf(lineList(l))[rfqKeyOf(l)] = true; });
+  keepPlace(renderBuySheet);
 }
 // The same figures as a spreadsheet, because a screenshot of a panel is not something you put
 // in front of a customer or a supply house.
@@ -6720,7 +6828,7 @@ function libraryColumnActive(){ return libIndex.length > 0 && libLoadedAll; }
 function libraryColumnShown(){ return true; }
 function libNotHereCell(){
   return '<td class="supcell libcell"><span class="mm miss">NO PRICE LIST</span>'+
-    '<div class="why">your price list is not on this computer. Library tab &rarr; Pull from the database.</div></td>';
+    '<div class="why">the current price list has not been opened on this computer. Library tab &rarr; drop the spreadsheet in.</div></td>';
 }
 function libCellHtml(row){
   const m = libraryOffer(row);
