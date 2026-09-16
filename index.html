@@ -472,7 +472,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B33</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B34</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -622,8 +622,8 @@
     </div>
     <div id="buyEmpty" class="card"><p class="hint" style="margin:0">Nothing here yet. Load the takeoff, read the quotes, then run the comparison on tab 5.</p></div>
     <div class="card" id="healthCard" style="display:none">
-      <h2>How much of this job the quotes actually priced</h2>
-      <p class="hint" style="margin:0 0 10px">Before you read either list: this is where the supplier prices went, and what the buy sheet is resting on. All of it is counted in the browser from the comparison rows &mdash; you can check any figure by hand.</p>
+      <h2>Where this job stands</h2>
+      <p class="hint" style="margin:0 0 10px">Counted in the browser from the comparison rows, as lines rather than quantities. Every figure can be checked by hand.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
         <button class="btn2 primary" type="button" onclick="downloadHealth()">Download this as Excel</button>
         <span class="hint" id="healthMsg" style="margin:0"></span>
@@ -4934,45 +4934,65 @@ function quoteHealth(){
   if(!bs) return null;
   const lines = bs.lines || [], names = bs.names || [];
   if(!names.length) return null;
+  const byName = {};
+  suppliers.filter(x=>x.data).forEach(x=>{ byName[x.name] = x; });
 
-  // Every supplier gets one slot on every line. A slot either carries a price we can stand
-  // next to another price, or it does not, and if it does not there is exactly one reason why.
-  const reasonOf = o => o.match === 'missing'
-    ? 'the supplier never quoted this line'
-    : (o.blocked[0] || 'the line carried no usable price');
-  const reasons = {}, bySup = {};
-  names.forEach(n=>{ bySup[n] = { supplier:n, quoted:0, usable:0, dropped:0, reasons:{} }; });
-  let slots = 0, usable = 0;
-  lines.forEach(l=>{
-    (l.offers||[]).forEach(o=>{
-      slots++;
-      const b = bySup[o.supplier]; if(!b) return;
-      if(o.match !== 'missing') b.quoted++;
-      if(o.price !== null){ usable++; b.usable++; return; }
-      const r = reasonOf(o);
+  // Per supplier, measured against their own quote, not against our takeoff.
+  const bySupplier = names.map(n=>{
+    const sup = byName[n];
+    const onQuote = ((sup && sup.data && sup.data.items) || []).length;
+    const placed = {};
+    let tied = 0, used = 0, questioned = 0;
+    const reasons = {};
+    lines.forEach(l=>{
+      const o = (l.offers||[]).find(x=>x.supplier===n);
+      if(!o || o.match === 'missing') return;
+      tied++;
+      const q = (o.quoted_as||'').trim().toLowerCase();
+      if(q) placed[q] = true;
+      if(o.price !== null){ used++; return; }
+      if(o.quoted_price !== null) questioned++;
+      const r = o.blocked[0] || 'no reason recorded';
       reasons[r] = (reasons[r]||0) + 1;
-      b.dropped++; b.reasons[r] = (b.reasons[r]||0) + 1;
     });
+    return { supplier:n, onQuote, tied, placed:Object.keys(placed).length, used, questioned, reasons,
+             unplaced: Math.max(0, onQuote - Object.keys(placed).length) };
   });
 
-  const withSupplierPrice = lines.filter(l=>(l.offers||[]).some(o=>o.price !== null)).length;
-  const libOnly = lines.filter(l=>!(l.offers||[]).some(o=>o.price !== null) && l.libPriced);
+  // Line by line, which is how an estimator counts. Not quantities - one takeoff line is one
+  // line here whether it is a single floor drain or four hundred feet of pipe.
+  const hasNum = l => (l.offers||[]).some(o=>o.quoted_price !== null);
+  const comparable = lines.filter(l=>(l.offers||[]).some(o=>o.price !== null));
+  const questioned = lines.filter(l=>hasNum(l) && !(l.offers||[]).some(o=>o.price !== null));
+  const libOnly    = lines.filter(l=>!hasNum(l) && l.libPriced);
+  const nothing    = lines.filter(l=>!hasNum(l) && !l.libPriced);
+
+  // Ahmed's question: of everything nobody quoted, how much of it is even our trade?
+  const cat = {}, trade = {};
+  nothing.forEach(l=>{
+    const c = l.category || 'Other';                      cat[c]   = (cat[c]||0) + 1;
+    const t = (l.trade && l.trade.trade) || 'Not sure';    trade[t] = (trade[t]||0) + 1;
+  });
   const conf = { high:0, medium:0, low:0 };
   libOnly.forEach(l=>{ const c = (l.lib && l.lib.confidence) || 'low'; conf[c] = (conf[c]||0) + 1; });
-  const noPriceAtAll = lines.filter(l=>!(l.offers||[]).some(o=>o.price !== null) && !l.libPriced).length;
+  const tally = o => Object.keys(o).map(k=>({ k:k, n:o[k] })).sort((x,y)=>y.n-x.n);
 
-  return {
-    lines: lines.length, names, slots, usable, dropped: slots - usable,
-    reasons: Object.keys(reasons).map(r=>({ reason:r, n:reasons[r] })).sort((a,b)=>b.n-a.n),
-    bySupplier: names.map(n=>bySup[n]).sort((a,b)=>b.usable-a.usable || a.supplier.localeCompare(b.supplier)),
-    withSupplierPrice, libOnly: libOnly.length, libConf: conf, noPriceAtAll,
-    dupes: duplicateLines()
-  };
+  return { lines: lines.length, names, bySupplier,
+    comparable: comparable.length, questioned: questioned.length,
+    libOnly: libOnly.length, nothing: nothing.length, libConf: conf,
+    nothingByCat: tally(cat), nothingByTrade: tally(trade),
+    quoteLines: bySupplier.reduce((a,b)=>a+b.onQuote, 0),
+    quotePlaced: bySupplier.reduce((a,b)=>a+b.placed, 0),
+    dupes: duplicateLines() };
 }
 // The same fixture entered twice - once with the sheet it was counted on in front of it, once
 // without - is two lines on the buy sheet, two library matches and twice the money. The page
 // prefix is the only difference, so it is stripped before the two are compared. This is the
 // same prefix rule the library matcher already uses, kept in one place on purpose.
+function dupeSheet(text){
+  const m = /^([a-z]{1,3}\d{2,4})[_\s-]+/.exec(String(text==null?'':text).toLowerCase());
+  return m ? m[1] : '';
+}
 function dupeStem(text){
   return String(text==null?'':text).toLowerCase()
     .replace(/^[a-z]{1,3}\d{2,4}[_\s-]+/,'')
@@ -4987,7 +5007,21 @@ function duplicateLines(){
     if(!k.trim() || k.charAt(0) === '|') return;
     (by[k] = by[k] || []).push(l);
   });
-  return Object.keys(by).filter(k=>by[k].length > 1).map(k=>by[k]);
+  const out = [];
+  Object.keys(by).forEach(k=>{
+    const grp = by[k];
+    if(grp.length < 2) return;
+    const bare = grp.filter(l=>!dupeSheet(l.takeoff_line || l.item || ''));
+    // A copy with no sheet number is the same item written twice - that is a real duplicate,
+    // and it pulls the sheeted copies in with it so both halves can be judged together.
+    if(bare.length){ out.push(grp); return; }
+    // Otherwise the same wording on two different drawings is two real lines. Only the same
+    // drawing twice is a duplicate.
+    const bySheet = {};
+    grp.forEach(l=>{ const sh = dupeSheet(l.takeoff_line || l.item || ''); (bySheet[sh] = bySheet[sh]||[]).push(l); });
+    Object.keys(bySheet).forEach(sh=>{ if(bySheet[sh].length > 1) out.push(bySheet[sh]); });
+  });
+  return out;
 }
 // kinds: the trade is not certain, it is plainly another trade's work, the library match is
 // shaky, or the supplier prices disagree so badly they cannot be the same item.
@@ -5060,21 +5094,17 @@ function renderQuoteHealth(){
   const h = quoteHealth();
   if(!h || !h.lines){ card.style.display='none'; out.innerHTML=''; return; }
   card.style.display = 'block';
-  const pct = (a,b) => b ? Math.round(a/b*100) : 0;
-  const nQuotes = h.names.length;
-  const supplierPct = pct(h.withSupplierPrice, h.lines);
+  const pc = (a,b) => b ? Math.round(a/b*100) : 0;
 
-  // The headline is the one number that decides whether any of this is presentable, so it is
-  // said first and in the words an estimator would use, not as a percentage buried in a table.
-  const tone = supplierPct < 25 ? 'err' : supplierPct < 60 ? 'warn' : 'ok';
+  const priced = h.comparable + h.questioned;
   const head =
-    '<div class="note '+tone+'" style="margin-top:0"><b>'+h.withSupplierPrice+' of '+h.lines+
-      ' lines ('+supplierPct+'%) have a price from a supplier.</b> '+
-      (h.libOnly ? ('Another '+h.libOnly+' '+(h.libOnly===1?'is':'are')+' priced only from your own library, which is what the item costs us, not an offer anybody has made. ') : '')+
-      (h.noPriceAtAll ? (h.noPriceAtAll+' '+(h.noPriceAtAll===1?'line has':'lines have')+' no price from anywhere. ') : '')+
-      (supplierPct < 25
-        ? 'At this level the quotes are not pricing the job. That is the thing to fix before any of these numbers go in front of anybody.'
-        : 'Open the sections below to see exactly where the rest went.')+
+    '<div class="note '+(priced ? 'info' : 'err')+'" style="margin-top:0">'+
+      '<b>'+h.lines+' takeoff lines.</b> '+
+      h.comparable+' have a price you can put next to another price. '+
+      h.questioned+' have a price with a question on it. '+
+      h.libOnly+' have only your own library. '+
+      h.nothing+' have nothing from anybody.'+
+      '<div class="why" style="margin-top:6px">Counted as lines, not quantities. One takeoff line is one line here whether it is a single floor drain or four hundred feet of pipe.</div>'+
     '</div>';
 
   const sec = (title, count, body) =>
@@ -5082,57 +5112,57 @@ function renderQuoteHealth(){
       '<span class="c">'+esc(count)+' &middot; click to open</span></div>'+
     '<div class="collapsible-body" style="display:none">'+body+'</div></div>';
 
-  // Where the prices went. One row per reason, biggest first, because the biggest reason is
-  // almost always the whole story and it should not have to be hunted for.
-  const reasonTable =
-    '<div class="note info" style="margin-top:0">Each supplier gets one chance to price each line. '+h.lines+
-      ' line'+(h.lines===1?'':'s')+' &times; '+nQuotes+' quote'+(nQuotes===1?'':'s')+' = <b>'+h.slots+
-      '</b> chances. <b>'+h.usable+'</b> came back with a price we can put next to another price. Here is what happened to the other '+h.dropped+'.</div>'+
-    '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-      '<th style="min-width:340px">What stopped the price being used</th><th style="width:110px">Times</th><th style="width:110px">Share</th>'+
-      '</tr></thead><tbody>'+
-      h.reasons.map(r=>'<tr><td>'+esc(r.reason)+'</td><td class="qtybox">'+r.n+'</td>'+
-        '<td class="qtybox">'+pct(r.n, h.dropped)+'%</td></tr>').join('')+
-      '</tbody></table></div>'+
-    '<p class="hint" style="margin:10px 0 0">&ldquo;The supplier never quoted this line&rdquo; is a scope problem &mdash; they did not offer it. Everything else is a reading problem: they did put something on paper and it could not be tied to the takeoff line safely. Those are the ones worth chasing, because the money is already in the quote.</p>';
-
-  // Supplier by supplier, because "the quotes are bad" is not something you can take to anybody.
-  // "Ferguson priced 40 lines and 36 of them could not be read" is.
+  // The fair measure, and the one that actually points at work worth doing.
   const supTable =
+    '<div class="note info" style="margin-top:0">A supply house prices what you asked them for, not your whole takeoff. '+
+      'So the question is not how much of the job they missed &mdash; it is how many lines were on <b>their</b> quote, and how many of those we managed to tie to a takeoff line. '+
+      'The ones we could not tie are the work: the money is already on the quote.</div>'+
     '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-      '<th style="min-width:180px">Supplier</th><th style="width:130px">Lines they quoted</th>'+
-      '<th style="width:130px">Of those, usable</th><th style="width:110px">Dropped</th>'+
-      '<th style="min-width:300px">Biggest reason they were dropped</th></tr></thead><tbody>'+
+      '<th style="min-width:170px">Supplier</th>'+
+      '<th style="width:130px">Lines on their quote</th>'+
+      '<th style="width:140px">We tied to the takeoff</th>'+
+      '<th style="width:130px">Never placed</th>'+
+      '<th style="width:120px">Price usable</th>'+
+      '<th style="min-width:260px">Biggest thing in the way</th></tr></thead><tbody>'+
       h.bySupplier.map(b=>{
         const top = Object.keys(b.reasons).sort((x,y)=>b.reasons[y]-b.reasons[x])[0];
         return '<tr><td><div class="itemdesc">'+esc(b.supplier)+'</div></td>'+
-          '<td class="qtybox">'+b.quoted+'</td>'+
-          '<td class="qtybox">'+b.usable+(b.quoted?(' <span class="itemsub">('+pct(b.usable,b.quoted)+'%)</span>'):'')+'</td>'+
-          '<td class="qtybox">'+b.dropped+'</td>'+
+          '<td class="qtybox">'+b.onQuote+'</td>'+
+          '<td class="qtybox">'+b.placed+(b.onQuote?(' <span class="itemsub">('+pc(b.placed,b.onQuote)+'%)</span>'):'')+'</td>'+
+          '<td class="qtybox">'+b.unplaced+'</td>'+
+          '<td class="qtybox">'+b.used+(b.questioned?(' <span class="itemsub">+'+b.questioned+' with a question</span>'):'')+'</td>'+
           '<td class="why">'+(top ? esc(top)+' &times; '+b.reasons[top] : '')+'</td></tr>';
       }).join('')+
-      '</tbody></table></div>'+
-    '<p class="hint" style="margin:10px 0 0">A supplier who quoted plenty of lines but has almost none usable is not a bad supplier. It means their quote and our takeoff are describing the same material in different words, and nothing has taught this tool the bridge between them yet.</p>';
+      '</tbody></table></div>';
 
-  // What the buy sheet is standing on. This is the question he actually asked.
+  // How much of "nobody quoted this" is even ours.
+  const nothingTable = !h.nothing ? '' :
+    '<div class="note info" style="margin-top:0">These are takeoff lines with no number on them from anybody. Before treating that as a hole in the bid, check how much of it is your trade at all.</div>'+
+    '<div style="display:flex;gap:26px;flex-wrap:wrap">'+
+    '<div class="tablewrap" style="flex:1;min-width:280px"><table class="matrix"><thead><tr><th>Trade</th><th style="width:90px">Lines</th><th style="width:90px">Share</th></tr></thead><tbody>'+
+      h.nothingByTrade.map(r=>'<tr><td>'+esc(r.k)+'</td><td class="qtybox">'+r.n+'</td><td class="qtybox">'+pc(r.n,h.nothing)+'%</td></tr>').join('')+
+      '</tbody></table></div>'+
+    '<div class="tablewrap" style="flex:1;min-width:280px"><table class="matrix"><thead><tr><th>Category</th><th style="width:90px">Lines</th><th style="width:90px">Share</th></tr></thead><tbody>'+
+      h.nothingByCat.map(r=>'<tr><td>'+esc(r.k)+'</td><td class="qtybox">'+r.n+'</td><td class="qtybox">'+pc(r.n,h.nothing)+'%</td></tr>').join('')+
+      '</tbody></table></div></div>';
+
   const c = h.libConf;
   const standTable =
     '<div class="tablewrap"><table class="matrix"><thead><tr>'+
-      '<th style="min-width:340px">What is behind the price</th><th style="width:110px">Lines</th><th style="width:110px">Share</th>'+
+      '<th style="min-width:340px">Where the price on that line came from</th><th style="width:90px">Lines</th><th style="width:90px">Share</th>'+
       '</tr></thead><tbody>'+
-      '<tr><td>A supplier quoted it and the price can be used</td><td class="qtybox">'+h.withSupplierPrice+'</td><td class="qtybox">'+pct(h.withSupplierPrice,h.lines)+'%</td></tr>'+
-      '<tr><td>Nobody quoted it &mdash; the only price is our own library, matched <b>high</b> confidence</td><td class="qtybox">'+c.high+'</td><td class="qtybox">'+pct(c.high,h.lines)+'%</td></tr>'+
-      '<tr><td>Nobody quoted it &mdash; our own library, <b>medium</b> confidence</td><td class="qtybox">'+c.medium+'</td><td class="qtybox">'+pct(c.medium,h.lines)+'%</td></tr>'+
-      '<tr><td>Nobody quoted it &mdash; our own library, <b>low</b> confidence, which is a guess with a price on it</td><td class="qtybox">'+c.low+'</td><td class="qtybox">'+pct(c.low,h.lines)+'%</td></tr>'+
-      '<tr><td>No price from anywhere &mdash; these are on the RFQ list</td><td class="qtybox">'+h.noPriceAtAll+'</td><td class="qtybox">'+pct(h.noPriceAtAll,h.lines)+'%</td></tr>'+
-      '</tbody></table></div>'+
-    (c.low ? '<div class="note warn" style="margin-bottom:0">'+c.low+' line'+(c.low===1?'':'s')+
-      ' on the buy sheet '+(c.low===1?'carries':'carry')+' a price that came off a weak library match with nothing to check it against. Those are listed one by one under <b>Priced only off a shaky library match</b> below.</div>' : '');
+      '<tr><td>A supplier quoted it and the price stands on its own</td><td class="qtybox">'+h.comparable+'</td><td class="qtybox">'+pc(h.comparable,h.lines)+'%</td></tr>'+
+      '<tr><td>A supplier quoted it but something needs checking &mdash; shown in red with CHECK</td><td class="qtybox">'+h.questioned+'</td><td class="qtybox">'+pc(h.questioned,h.lines)+'%</td></tr>'+
+      '<tr><td>Your own library, <b>high</b> confidence match</td><td class="qtybox">'+c.high+'</td><td class="qtybox">'+pc(c.high,h.lines)+'%</td></tr>'+
+      '<tr><td>Your own library, <b>medium</b> confidence</td><td class="qtybox">'+c.medium+'</td><td class="qtybox">'+pc(c.medium,h.lines)+'%</td></tr>'+
+      '<tr><td>Your own library, <b>low</b> confidence &mdash; a guess with a price on it</td><td class="qtybox">'+c.low+'</td><td class="qtybox">'+pc(c.low,h.lines)+'%</td></tr>'+
+      '<tr><td>No price from anywhere &mdash; these are the RFQ list</td><td class="qtybox">'+h.nothing+'</td><td class="qtybox">'+pc(h.nothing,h.lines)+'%</td></tr>'+
+      '</tbody></table></div>';
 
   const dupeCount = h.dupes.reduce((a,g)=>a+g.length, 0);
   const dupeBody = !h.dupes.length ? '' : sec(
     'The same item counted more than once', h.dupes.length+' item'+(h.dupes.length===1?'':'s')+', '+dupeCount+' lines',
-    '<div class="note err" style="margin-top:0">These read as the same item once the sheet number is taken off the front. Each copy gets its own price, so the job is being bought twice.</div>'+
+    '<div class="note err" style="margin-top:0">The same item written twice on the same drawing, or once with a sheet number and once without. The same material on two different drawings is <b>not</b> counted here &mdash; that is two real lines.</div>'+
     '<div class="tablewrap"><table class="matrix"><thead><tr><th style="min-width:340px">The lines that read the same</th>'+
       '<th style="width:110px">Category</th><th style="width:110px">Qty each</th></tr></thead><tbody>'+
       h.dupes.slice(0,40).map(grp=>'<tr><td>'+grp.map(l=>'<div class="itemdesc">'+esc(l.takeoff_line||l.item||'')+'</div>').join('')+
@@ -5142,9 +5172,10 @@ function renderQuoteHealth(){
       '</tbody></table></div>');
 
   out.innerHTML = head +
-    sec('Where the supplier prices went', h.dropped+' of '+h.slots+' dropped', reasonTable) +
-    sec('Supplier by supplier', h.names.length+' quote'+(h.names.length===1?'':'s'), supTable) +
-    sec('What every price on the buy sheet is standing on', h.lines+' lines', standTable) +
+    sec('What was on each quote, and how much of it we could use',
+        h.quotePlaced+' of '+h.quoteLines+' quoted lines placed', supTable) +
+    (nothingTable ? sec('What nobody quoted, and whose trade it is', h.nothing+' lines', nothingTable) : '') +
+    sec('Where each price came from', h.lines+' lines', standTable) +
     dupeBody;
 }
 // The same figures as a spreadsheet, because a screenshot of a panel is not something you put
@@ -5159,41 +5190,44 @@ function downloadHealth(){
   const wb = XLSX.utils.book_new();
 
   const a1 = [
-    ['HOW MUCH OF THIS JOB THE QUOTES PRICED'],
+    ['WHERE THIS JOB STANDS'],
     ['Job', job],
     ['Prepared', new Date().toLocaleDateString()],
+    ['Counted as takeoff lines, not quantities.'],
     [],
     ['Takeoff lines compared', h.lines],
     ['Quotes read', h.names.length],
-    ['Chances to price a line (lines x quotes)', h.slots],
-    ['Prices that can be used', h.usable],
-    ['Prices dropped', h.dropped],
     [],
-    ['Lines with a usable supplier price', h.withSupplierPrice, pct(h.withSupplierPrice, h.lines)],
-    ['Lines priced only from our own library', h.libOnly, pct(h.libOnly, h.lines)],
-    ['   of those, high confidence match', h.libConf.high],
-    ['   of those, medium confidence match', h.libConf.medium],
-    ['   of those, low confidence match', h.libConf.low],
-    ['Lines with no price from anywhere', h.noPriceAtAll, pct(h.noPriceAtAll, h.lines)],
+    ['A price that stands on its own', h.comparable, pct(h.comparable, h.lines)],
+    ['A price with a question on it', h.questioned, pct(h.questioned, h.lines)],
+    ['Only our own library price', h.libOnly, pct(h.libOnly, h.lines)],
+    ['   high confidence match', h.libConf.high],
+    ['   medium confidence match', h.libConf.medium],
+    ['   low confidence match', h.libConf.low],
+    ['No price from anywhere', h.nothing, pct(h.nothing, h.lines)],
     [],
-    ['WHERE THE SUPPLIER PRICES WENT'],
-    ['What stopped the price being used','Times','Share of dropped']
-  ].concat(h.reasons.map(r=>[r.reason, r.n, pct(r.n, h.dropped)]));
+    ['WHAT NOBODY QUOTED, BY TRADE'],
+    ['Trade','Lines','Share']
+  ].concat(h.nothingByTrade.map(r=>[r.k, r.n, pct(r.n, h.nothing)]))
+   .concat([[], ['WHAT NOBODY QUOTED, BY CATEGORY'], ['Category','Lines','Share']])
+   .concat(h.nothingByCat.map(r=>[r.k, r.n, pct(r.n, h.nothing)]));
   const ws1 = XLSX.utils.aoa_to_sheet(a1);
-  ws1['!cols'] = [{wch:56},{wch:14},{wch:18}];
+  ws1['!cols'] = [{wch:52},{wch:14},{wch:14}];
   XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
 
-  const a2 = [['Supplier','Lines they quoted','Of those, usable','Usable %','Dropped','Biggest reason','Times']]
+  const a2 = [
+    ['Measured against each supplier’s own quote, not against our takeoff.'],[],
+    ['Supplier','Lines on their quote','We tied to the takeoff','Placed %','Never placed','Price usable','With a question','Biggest thing in the way','Times']]
     .concat(h.bySupplier.map(b=>{
       const top = Object.keys(b.reasons).sort((x,y)=>b.reasons[y]-b.reasons[x])[0] || '';
-      return [b.supplier, b.quoted, b.usable, pct(b.usable, b.quoted), b.dropped, top, top ? b.reasons[top] : ''];
+      return [b.supplier, b.onQuote, b.placed, pct(b.placed, b.onQuote), b.unplaced, b.used, b.questioned, top, top ? b.reasons[top] : ''];
     }));
   const ws2 = XLSX.utils.aoa_to_sheet(a2);
-  ws2['!cols'] = [{wch:26},{wch:18},{wch:18},{wch:12},{wch:12},{wch:52},{wch:10}];
+  ws2['!cols'] = [{wch:24},{wch:20},{wch:22},{wch:10},{wch:14},{wch:14},{wch:16},{wch:48},{wch:10}];
   XLSX.utils.book_append_sheet(wb, ws2, 'By supplier');
 
   if(h.dupes.length){
-    const a3 = [['These lines read as the same item once the sheet number is removed'],[],
+    const a3 = [['The same item written twice on one drawing, or once with a sheet number and once without'],[],
                 ['Group','Takeoff line','Category','Qty','Unit']];
     h.dupes.forEach((grp,i)=>grp.forEach(l=>a3.push([i+1, l.takeoff_line||l.item||'', l.category||'', l.required_qty||'', l.required_uom||''])));
     const ws3 = XLSX.utils.aoa_to_sheet(a3);
@@ -5201,7 +5235,7 @@ function downloadHealth(){
     XLSX.utils.book_append_sheet(wb, ws3, 'Counted twice');
   }
 
-  XLSX.writeFile(wb, slugify(job) + '-quote-health.xlsx');
+  XLSX.writeFile(wb, slugify(job) + '-where-this-job-stands.xlsx');
   if(msg) msg.textContent = 'Written out.';
 }
 function renderNeedsLook(){
