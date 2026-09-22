@@ -484,7 +484,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B44</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B45</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -4644,6 +4644,9 @@ function renderExceptions(){
 const UOM_SYNONYMS = {
   ft:'ft', foot:'ft', feet:'ft', lf:'ft', 'lin ft':'ft', 'linft':'ft', "'":'ft',
   ea:'ea', each:'ea', pc:'ea', pcs:'ea', piece:'ea', pieces:'ea', unit:'ea', units:'ea',
+  // A stick of pipe, under every name a supply house prints on it.
+  lg:'length', lgt:'length', lgth:'length', len:'length', stk:'length', stick:'length',
+  jt:'length', joint:'length', pce:'ea',
   lot:'lot', ls:'lot', 'lump sum':'lot',
   box:'box', bx:'box', roll:'roll', length:'length', lgth:'length', stick:'length',
   c:'per hundred', m:'per thousand', hr:'hr', hour:'hr', hours:'hr'
@@ -4653,11 +4656,40 @@ const UOM_SYNONYMS = {
 // The library's price for the quantity on the takeoff line, or null when multiplying the two
 // together would be arithmetic on two different things. A unit price is information; a total
 // worked out across mismatched units is a wrong answer dressed as a right one.
+// How long a stick is, taken from the row's own wording: X 10 FT, X 20 FT, X 21'.
+function libPackFeet(desc){
+  const m = /\bx\s*(\d+(?:\.\d+)?)\s*(?:ft\b|foot\b|feet\b|')/i.exec(String(desc||''));
+  return m ? parseFloat(m[1]) : 0;
+}
+// The price in the unit the TAKEOFF counts in. A price list sells pipe by the stick, by the
+// hundred feet or by the thousand; a takeoff counts feet. Where the conversion is written on
+// the row it is done. Where it genuinely cannot be reconciled - a fitting sold each against a
+// length - per_unit stays null and no total is ever worked out.
+function libPriceFor(m, reqUom){
+  if(!m) return m;
+  m.per_unit = null; m.per_note = '';
+  if(!(m.price > 0)) return m;
+  const a = uomKey(m.uom), b = uomKey(reqUom);
+  if(!a || !b || a === b){ m.per_unit = m.price; return m; }
+  if(b === 'ft'){
+    if(a === 'per hundred'){ m.per_unit = m.price/100;  m.per_note = 'their price is per 100 ft'; return m; }
+    if(a === 'per thousand'){ m.per_unit = m.price/1000; m.per_note = 'their price is per 1,000 ft'; return m; }
+    if(a === 'length' || a === 'ea'){
+      const len = libPackFeet(m.description);
+      if(len > 0){
+        m.per_unit = m.price/len;
+        m.per_note = 'their price is for one '+len+' ft length, so '+money(m.price)+' \u00f7 '+len;
+        return m;
+      }
+    }
+  }
+  return m;
+}
 function libExtended(lib, qty, reqUom){
-  if(!lib || !(lib.price > 0)) return null;
-  const a = uomKey(lib.uom), b = uomKey(reqUom);
-  if(a && b && a !== b) return null;
-  return lib.price * (qty || 1);
+  if(!lib) return null;
+  if(lib.per_unit === undefined) libPriceFor(lib, reqUom);
+  if(!(lib.per_unit > 0)) return null;
+  return lib.per_unit * (qty || 1);
 }
 function uomFamily(u){
   const k = uomKey(u);
@@ -4792,9 +4824,12 @@ function buildBuySheet(){
     // counts - it is shown with its confidence so an unconvincing one is obvious, and one
     // button moves it to the RFQ if you do not believe it.
     const libExt = libExtended(lib, reqQty, row.required_uom);
-    // A price we cannot apply to this line's quantity is not a price for this line. It is shown,
-    // with the reason, but it does not put the line on the buy sheet as though it were costed.
-    const libPriced = !!(lib && lib.price > 0 && libExt !== null);
+    // His rule, and it is the right one: a number is a number. A shaky match with a price on it
+    // belongs on the buy sheet with its confidence showing, not on a list of things nobody could
+    // price. Only a line where nothing anywhere put a figure goes out for quoting.
+    const libPriced = !!(lib && lib.price > 0);
+    // We have their price but not in this line's unit, so there is no total - the unit price is
+    // shown and the line still lands on the buy sheet where somebody can look at it.
     const libUomClash = !!(lib && lib.price > 0 && libExt === null);
     // Any number at all puts the line on the buy sheet: a clean price, a shaky one with a
     // warning, or our own library. Only a line where nobody anywhere put a figure goes out
@@ -4955,7 +4990,14 @@ function reasonChips(list){
 }
 // Plain words. "Not comparable" told nobody anything.
 function whyNoPrice(l){
-  if(l.state === 'nobody') return 'Nobody quoted it, and it is not in your price list.';
+  if(l.state === 'nobody'){
+    // It used to say "and it is not in your price list" directly alongside a cell showing the
+    // very thing it had found in the price list. Say what is actually true about this line.
+    if(l.libPriced && l.libUomClash) return 'Nobody quoted it. Your own list has a price on it, but in a different unit from the takeoff, so there is no total yet.';
+    if(l.libPriced) return 'Nobody quoted it. The price on this line is your own, off your price list.';
+    if(l.lib) return 'Nobody quoted it. The closest thing in your price list has no price on its row.';
+    return 'Nobody quoted it, and nothing in your price list matched it.';
+  }
   if(l.blockers && l.blockers.length){
     return 'Quoted, but not usable as it stands: ' + Array.from(new Set(l.blockers.map(reasonTag))).join(', ') + '.';
   }
@@ -5519,7 +5561,9 @@ function renderNeedsLook(){
         '<td><span class="mm '+(lineList(l)==='buy'?'exact':'unclear')+'">'+(lineList(l)==='buy'?'BUY':'RFQ')+'</span></td>'+
         names.map(n=>buyCell((l.offers||[]).find(x=>x.supplier===n))).join('')+
         '<td class="supcell libcell">'+(l.libPriced
-          ? '<div class="pricebox">'+money(l.libExt)+'</div>'+
+          ? '<div class="pricebox">'+(l.libExt === null ? money(l.lib.price)+' / '+esc(l.lib.uom||'?') : money(l.libExt))+'</div>'+
+            (l.libExt === null ? '<div class="why">no total &mdash; their unit is '+esc(l.lib.uom||'?')+' and the takeoff is in '+esc(l.required_uom||'?')+'</div>'
+                               : (l.lib.per_note ? '<div class="why">'+esc(l.lib.per_note)+'</div>' : ''))+
             '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
             esc(l.lib.confidence)+'</span> '+esc(String(l.lib.description).slice(0,36))+'</div>'
           : l.libUomClash
@@ -5610,7 +5654,9 @@ function renderBuyList(){
             names.map(n=>buyCell(l.offers.find(x=>x.supplier===n))).join('')+
             (!libraryColumnActive() ? libNotHereCell() :
              '<td class="supcell libcell">'+(l.libPriced
-              ? '<div class="pricebox">'+money(l.libExt)+'</div>'+
+              ? '<div class="pricebox">'+(l.libExt === null ? money(l.lib.price)+' / '+esc(l.lib.uom||'?') : money(l.libExt))+'</div>'+
+                (l.libExt === null ? '<div class="why">no total &mdash; their unit is '+esc(l.lib.uom||'?')+' and the takeoff is in '+esc(l.required_uom||'?')+', so somebody has to look</div>'
+                                   : (l.lib.per_note ? '<div class="why">'+esc(l.lib.per_note)+'</div>' : ''))+
                 '<div class="why">'+money(l.lib.price)+(l.lib.uom?(' / '+esc(l.lib.uom)):'')+' &mdash; your cost, not an offer</div>'+
                 '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
                   esc(l.lib.confidence)+' match</span> '+esc(String(l.lib.description).slice(0,44))+'</div>'
@@ -6817,7 +6863,7 @@ function libUnmatchedStems(){
     const stem = libStem(it.description);
     if(!stem) return;
     if(libLookupVocab(stem)) return;   // already covered by something taught for the leading words
-    const m = libBestMatch([it.description, it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description, it.uom);
+    const m = libAskItem(it);
     const ok = m && m.confidence !== 'low';
     if(!seen[stem]) seen[stem] = { stem, lines:[], notes:[], matched:0, unmatched:0, category: catOf(it) };
     if(seen[stem].lines.length < 4) seen[stem].lines.push(it.description);
@@ -6839,7 +6885,15 @@ function libApplyVocab(v){
   libIdx = {}; libRowCache = {};      // the index was built on the old vocabulary
 }
 
+// Flat list of every token, which is what the index and the row side want. The query side asks
+// for the groups instead, so that one abbreviation is one piece of evidence however many words
+// it happens to expand into.
 function libTokens(t){
+  const out = [];
+  libTokenGroups(t).forEach(g=>g.forEach(x=>out.push(x)));
+  return out;
+}
+function libTokenGroups(t){
   const raw = String(t==null?'':t).toLowerCase()
     .replace(/[^a-z0-9./"'-]+/g,' ')
     .split(/\s+/)
@@ -6853,10 +6907,10 @@ function libTokens(t){
   const GRADED = new Set(['type','class','grade','series','sch','schedule']);
   const out = [];
   raw.forEach((w, i)=>{
-    if(w.length === 1 && GRADED.has(raw[i-1])){ out.push(raw[i-1] + w); return; }
+    if(w.length === 1 && GRADED.has(raw[i-1])){ out.push([raw[i-1] + w]); return; }
     const exp = libExpand(w);
-    if(exp !== w){ exp.split(' ').forEach(x=>{ if(keep(x)) out.push(x); }); return; }
-    if(keep(w)) out.push(w);
+    if(exp !== w){ const g = exp.split(' ').filter(keep); if(g.length) out.push(g); return; }
+    if(keep(w)) out.push([w]);
   });
   return out;
 }
@@ -6874,6 +6928,20 @@ function libTokKind(tok){
   return 'word';
 }
 function libWeight(tok){ const k = libTokKind(tok); return k==='model' ? 4 : 1; }
+// What a thing is MADE OF. These are mutually exclusive: a line calling for PVC is not served
+// by CPVC at six times the price, and copper is not steel. Where both sides name a material and
+// they do not overlap, it is a different product however many other words agree.
+const LIB_MATERIAL = {
+  pvc:'pvc', cpvc:'cpvc', abs:'abs', pex:'pex', pp:'pp', hdpe:'hdpe', pvdf:'pvdf',
+  copper:'copper', cu:'copper', brass:'brass', bronze:'bronze',
+  iron:'iron', ductile:'iron', steel:'steel', galvanized:'galv', galv:'galv',
+  stainless:'stainless', polypropylene:'pp', chemdrain:'cpvc'
+};
+function libMaterials(toks){
+  const out = new Set();
+  toks.forEach(t=>{ const m = LIB_MATERIAL[t]; if(m) out.add(m); });
+  return out;
+}
 function libRowText(rec, r){
   const roles = rec.roles || {};
   const cols = [roles.description, roles.part, roles.model, roles.manufacturer].filter(i=>i!==undefined);
@@ -6909,8 +6977,14 @@ function libNominalSize(t){
   const s = String(t == null ? '' : t)
     .replace(/(\d)\s*[-\s]\s*(\d+\s*\/\s*\d+)/g, '$1-$2')
     .replace(/\s*\/\s*/g, '/');
-  const m = /((?:\d+-)?\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:"|''|\bin\b|\binch(?:es)?\b)/i.exec(s);
-  return m ? m[1] : '';
+  // in\b rather than \bin\b: his list writes 8IN and 3/4IN with no space, and a word boundary
+  // in front of "in" can never match when a digit sits against it.
+  const m = /((?:\d+-)?\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:"|''|in\b|inch(?:es)?\b)/i.exec(s);
+  if(m) return m[1];
+  // And half his list writes no mark at all: "4 X 10FT S40 CPVC DWV PIPE". A size at the very
+  // front, followed by the X that introduces the length, is the size.
+  const lead = /^\s*((?:\d+-)?\d+(?:\.\d+)?(?:\/\d+)?)\s*x\b/i.exec(s);
+  return lead ? lead[1] : '';
 }
 function libStripSheet(t){
   return String(t == null ? '' : t).replace(/^\s*[A-Za-z]{1,3}\d{2,4}[_\s-]+/, '');
@@ -6925,7 +6999,17 @@ function libQueryText(text, keyText){
   return learned ? (base + ' ' + learned) : base;
 }
 function libBestMatch(text, keyText, reqUom){
-  const qTokens = Array.from(new Set(libTokens(libQueryText(text, keyText))));
+  // Grouped, and de-duplicated by the word each group came from: "sanitary" arriving twice -
+  // once from expanding "san", once from inside the taught translation - is one fact about the
+  // line, not two.
+  const seenG = {};
+  const qGroups = libTokenGroups(libQueryText(text, keyText)).filter(g=>{
+    const k = g.join(' ');
+    if(seenG[k]) return false;
+    seenG[k] = 1; return true;
+  });
+  const gWeight = g => Math.max.apply(null, g.map(libWeight));
+  const qTokens = Array.from(new Set([].concat.apply([], qGroups)));
   if(!qTokens.length) return null;
   // Taken from the takeoff line itself, not from the expansion: the shorthand is taught without
   // a size on purpose, so the size can only come from the line in front of us.
@@ -6933,7 +7017,8 @@ function libBestMatch(text, keyText, reqUom){
   // Only ever 'length', 'each' or nothing. Nothing means no opinion, and no opinion refuses
   // no rows at all.
   const qFam = uomFamily(reqUom);
-  const qWeightTotal = qTokens.reduce((a,t)=>a+libWeight(t), 0);
+  const qMat = libMaterials(qTokens);
+  const qWeightTotal = qGroups.reduce((a,g)=>a+gWeight(g), 0);
   let best = null, runnersUp = 0;
   libIndex.forEach(ix=>{
     const rec = libCache[ix.id];
@@ -6958,22 +7043,31 @@ function libBestMatch(text, keyText, reqUom){
     }
     if(!cand.size) return;
     cand.forEach((_, i)=>{
-      // A line measured in feet against a row sold each, or the other way round: a different
-      // kind of thing. This is what stops 386.52 FT of sanitary pipe landing on a socket.
+      const rowRaw = libRowText(rec, rec.rows[i]);
+      // A line counted in feet against a row sold EACH is only wrong when the row is not a
+      // length. "2 IN X 10 FT PVC PIPE" sold by the LG is 10 feet of pipe and converts; a
+      // socket sold each does not, and that is the one to refuse.
       if(qFam && roleUom !== undefined){
         const rFam = uomFamily(rec.rows[i][roleUom]);
-        if(rFam && rFam !== qFam) return;
+        if(qFam === 'length' && rFam === 'each' && !libPackFeet(rowRaw)) return;
+        if(qFam === 'each' && rFam === 'length') return;
       }
-      const rowRaw = libRowText(rec, rec.rows[i]);
       const rowSize = libNominalSize(rowRaw);
       // Both sides say a size outright and the sizes are different: it is a different product.
       if(qSize && rowSize && qSize !== rowSize) return;
       const rowToks = new Set(libTokens(rowRaw));
+      if(qMat.size){
+        const rMat = libMaterials(rowToks);
+        let shared = false;
+        rMat.forEach(m=>{ if(qMat.has(m)) shared = true; });
+        if(rMat.size && !shared) return;     // made of something else entirely
+      }
       let hit = 0, modelHit = 0, wordHit = 0, sizeHit = 0;
-      qTokens.forEach(t=>{
-        if(!rowToks.has(t)) return;
-        hit += libWeight(t);
-        const k = libTokKind(t);
+      qGroups.forEach(g=>{
+        const on = g.find(t=>rowToks.has(t));
+        if(!on) return;
+        hit += gWeight(g);
+        const k = libTokKind(on);
         if(k==='model') modelHit++; else if(k==='word') wordHit++; else sizeHit++;
       });
       if(!hit) return;
@@ -7049,9 +7143,7 @@ async function libTestAgainstTakeoff(btn){
     const items = takeoffData.items || [];
     const res = items.map(it=>{
       // the dry run must ask exactly what a real run asks, or it reports a comfort that is not there
-      const text = [it.description, [it.manufacturer, it.model].filter(Boolean).join(' '),
-                    it.notes, bidTextForLine(it.description)].filter(Boolean).join(' ');
-      return { line: it.description, m: libBestMatch(text, it.description, it.uom) };
+      return { line: it.description, m: libAskItem(it) };
     });
     const hit    = res.filter(r=>r.m);
     const priced = hit.filter(r=>r.m.price > 0);
@@ -7102,15 +7194,27 @@ function bidTextForLine(line){
 }
 // One cached answer per takeoff line for the life of a render.
 let libRowCache = {};
-function libraryOffer(row){
+// THE ONLY PLACE THE PRICE LIST IS ASKED ANYTHING. line is the takeoff line; model is a spec
+// or catalogue number if the takeoff carries one; uom is what the takeoff counts in.
+function libAsk(line, model, uom){
   if(!libIndex.length) return null;
-  const key = reqKey((row.takeoff_line||row.item||'')+'|'+(row.spec_model||''));
+  const norm = libStripSheet(String(line == null ? '' : line)).trim();
+  if(!norm) return null;
+  const key = reqKey(norm + '|' + (model||'') + '|' + (uomKey(uom)||''));
   if(key in libRowCache) return libRowCache[key];
-  const m = libBestMatch([row.takeoff_line || row.item, row.spec_model, row.notes,
-                          bidTextForLine(row.takeoff_line || row.item)].filter(Boolean).join(' '),
-                         row.takeoff_line || row.item, row.required_uom);
+  const m = libBestMatch([norm, model].filter(Boolean).join(' '), norm, uom);
+  if(m) libPriceFor(m, uom);
   libRowCache[key] = m;
   return m;
+}
+// A takeoff item and a comparison row are the same line described by two different objects.
+// Both are reduced to the same three fields before anything is looked up, so they cannot
+// produce different answers.
+function libAskItem(it){
+  return libAsk(it.description, [it.manufacturer, it.model].filter(Boolean).join(' '), it.uom);
+}
+function libraryOffer(row){
+  return libAsk(row.takeoff_line || row.item, row.spec_model, row.required_uom);
 }
 function libraryColumnActive(){ return libIndex.length > 0 && libLoadedAll; }
 // The column is always drawn. Whether it can price anything is a different question, and the
@@ -7189,8 +7293,7 @@ function libraryLookupForAsk(){
   const items = (takeoffData && takeoffData.items) || [];
   const matches = [];
   items.forEach(it=>{
-    const m = libBestMatch([it.description, [it.manufacturer,it.model].filter(Boolean).join(' '),
-                            it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description, it.uom);
+    const m = libAskItem(it);
     if(m) matches.push({ takeoff_line: it.description, library_description: m.description,
       part: m.part||'', price: m.price||0, uom: m.uom||'', confidence: m.confidence, matched_because: m.why });
   });
