@@ -484,7 +484,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B38</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B40</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -949,10 +949,26 @@ async function saveToProject(project, phase, data){
   if(!url) throw new Error('The Worker URL in Setup is empty, so there is nowhere to put this.');
   const res = await fetch(url + '/save', {
     method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({ project_name: project, phase, data: JSON.stringify(data) })
+    // NOT JSON.stringify(data). The Worker serialises what it is given, exactly as it does for
+    // the job data on the other save path, so handing it text that is already JSON gets that
+    // text wrapped a second time. One unwrap on the way back then returns a string instead of
+    // an object, every read finds nothing, and the shorthand looks lost when it is merely
+    // unreadable. This one word is why nothing in the library ever reached another computer.
+    body: JSON.stringify({ project_name: project, phase, data: data })
   });
   if(!res.ok) throw new Error('The Worker answered with status ' + res.status + '.');
   return true;
+}
+// A stored row, unwrapped. Anything written by an earlier build went up wrapped twice, so one
+// unwrap hands back a string rather than an object: unwrap again and it is whole. Everything
+// already in the database is recovered by this, nothing has to be re-taught.
+function parseStored(rec){
+  if(!rec) return null;
+  try{
+    let v = JSON.parse(rec.data);
+    if(typeof v === 'string') v = JSON.parse(v);   // written by a build that wrapped it twice
+    return v;
+  }catch(e){ return null; }
 }
 async function loadProjectRows(project){
   const url = workerUrl();
@@ -994,7 +1010,7 @@ async function libFetchVocab(){
   try{
     const latest = await loadProjectRows(LIBRARY_PROJECT);
     if(!latest.lib_vocab) return 0;
-    const v = JSON.parse(latest.lib_vocab.data);
+    const v = parseStored(latest.lib_vocab) || {};
     // What is stored centrally is what everyone shares; anything typed in here that the
     // database has not seen is kept rather than thrown away.
     libApplyVocab(Object.assign({}, LIB_VOCAB, v.vocab||{}));
@@ -1060,7 +1076,7 @@ async function libPushToCloud(btn){
     let cleared = 0;
     try{
       const old = await loadProjectRows(LIBRARY_PROJECT);
-      const om = old.lib_manifest ? JSON.parse(old.lib_manifest.data) : null;
+      const om = parseStored(old.lib_manifest);
       for(const sh of ((om && om.sheets) || [])){
         for(let i=0;i<(sh.chunks||0);i++){
           if(!old[libChunkKey(sh.id, i)]) continue;
@@ -1093,7 +1109,7 @@ async function libPushToCloud(btn){
     try{
       const prev = await loadProjectRows(LIBRARY_PROJECT);
       if(prev.lib_vocab){
-        const pv = JSON.parse(prev.lib_vocab.data);
+        const pv = parseStored(prev.lib_vocab) || {};
         // Theirs first, ours on top: an edit made here wins over the stored wording, but
         // nothing stored is ever dropped.
         merged = Object.assign({}, pv.vocab||{}, LIB_VOCAB);
@@ -1120,7 +1136,7 @@ async function libPushToCloud(btn){
       try{
         const back = await loadProjectRows(LIBRARY_PROJECT);
         ok = !!back.lib_manifest;
-        if(back.lib_vocab){ try{ vocabBack = Object.keys(JSON.parse(back.lib_vocab.data).vocab||{}).length; }catch(e){} }
+        if(back.lib_vocab){ const bv = parseStored(back.lib_vocab); vocabBack = bv ? Object.keys(bv.vocab||{}).length : 0; }
       }catch(e){ /* the send itself succeeded; only the read-back failed */ }
       if(vocabBack >= vocabN) break;
       if(msg) msg.textContent = 'Checking it really went in…';
@@ -1155,7 +1171,7 @@ async function libPullFromCloud(btn, quiet){
     // The shorthand. This is the whole point of the trip.
     if(latest.lib_vocab){
       try{
-        const v = JSON.parse(latest.lib_vocab.data);
+        const v = parseStored(latest.lib_vocab) || {};
         // MERGE. This used to replace, so pressing this button on a computer whose database
         // copy was thin wiped everything taught on this machine. Bringing something down must
         // never be able to take something away.
@@ -1171,13 +1187,15 @@ async function libPullFromCloud(btn, quiet){
     // overwrites a choice somebody made here.
     if(latest.lib_manifest){
       try{
-        const m = JSON.parse(latest.lib_manifest.data);
+        const m = parseStored(latest.lib_manifest) || {};
         LIB_CLOUD_SHEETS = (m.sheets||[]);
         sheetsKnown = LIB_CLOUD_SHEETS.length;
         for(const ix of libIndex){
           const rec = await libGet(ix.id);
           if(!rec) continue;
-          if(rec.roles && Object.keys(rec.roles).length) continue;
+          // Only a choice a PERSON made is protected. A guess is not, or the settings that
+          // came down from the database could never replace the guess they exist to correct.
+          if(rec.roles_source === 'you') continue;
           const match = LIB_CLOUD_SHEETS.find(sh=>
             (sh.file && rec.file && String(sh.file).toLowerCase() === String(rec.file).toLowerCase()) ||
             (sh.name && rec.name && String(sh.name).toLowerCase() === String(rec.name).toLowerCase()));
@@ -1196,7 +1214,9 @@ async function libPullFromCloud(btn, quiet){
 
     if(msg && !quiet){
       if(!vocabN && !sheetsKnown){
-        msg.textContent = 'Nothing is saved in the database yet.';
+        msg.textContent = latest.lib_vocab || latest.lib_manifest
+          ? 'There is something stored under the library, but it could not be read. Press "Save the shorthand and settings" on the computer that has them and it will be written back in a form that reads properly.'
+          : 'Nothing is saved in the database yet.';
       }else{
         msg.textContent = vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand' +
           (sheetsKnown ? (' and settings for ' + sheetsKnown + ' sheet' + (sheetsKnown===1?'':'s')) : '') +
@@ -6212,7 +6232,7 @@ const LIB_ROLE_HINTS = {
   uom:['uom','unit','units','per'],
   category:['category','group','class','type','division','section']
 };
-function libGuessRoles(cols){
+function libGuessRoles(cols, rows){
   const roles = {};
   const norm = c => String(c||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
   Object.keys(LIB_ROLE_HINTS).forEach(role=>{
@@ -6221,6 +6241,33 @@ function libGuessRoles(cols){
     if(found<0) cols.forEach((c,i)=>{ const n = norm(c); if(found<0 && n && LIB_ROLE_HINTS[role].some(h=>n.indexOf(h)>=0)) found = i; });
     if(found>=0) roles[role] = found;
   });
+  // The description column decides whether ANYTHING matches, and guessing it from the heading
+  // is how "ItemID" became the description on a real price list: the word "item" is inside it.
+  // Nothing then matched, on any line, and it looked like the matcher was broken.
+  // So it is chosen from the DATA instead. A description is a phrase; a part number, a brand
+  // and a code are one token. The column carrying the most words per cell is the description,
+  // whatever its heading happens to say.
+  const sample = (rows || []).slice(0, 60);
+  if(sample.length){
+    const stat = i => {
+      let n = 0, chars = 0, words = 0;
+      sample.forEach(r=>{
+        const v = String((r && r[i]) == null ? '' : r[i]).trim();
+        if(!v) return;
+        n++; chars += v.length; words += v.split(/\s+/).length;
+      });
+      return n ? { chars: chars/n, words: words/n } : { chars:0, words:0 };
+    };
+    let best = -1, bestScore = 0;
+    cols.forEach((c, i)=>{
+      if(i === roles.price || i === roles.uom) return;   // a price is not a description
+      const st = stat(i);
+      if(st.words < 2) return;                            // one token is a code, not a phrase
+      const score = st.chars * st.words;
+      if(score > bestScore){ bestScore = score; best = i; }
+    });
+    if(best >= 0) roles.description = best;
+  }
   return roles;
 }
 async function libImportFiles(list){
@@ -6228,7 +6275,7 @@ async function libImportFiles(list){
   const files = Array.from(list||[]).filter(f=>/\.(xlsx|xlsm|xlsb|xls|csv|tsv)$/i.test(f.name));
   if(!files.length){ status.textContent = 'Only spreadsheets belong in here: .xlsx, .xls or .csv.'; return; }
   if(typeof XLSX === 'undefined'){ status.textContent = 'The spreadsheet library did not load. Check the connection and reload the page.'; return; }
-  let added = 0;
+  let added = 0, adopted = 0;
   const notes = [];
   for(const f of files){
     try{
@@ -6245,8 +6292,17 @@ async function libImportFiles(list){
           .filter(r=>r.some(c=>c!==''));
         if(!rows.length){ notes.push('"'+sheetName+'" in '+f.name+' has a heading row ('+cols.slice(0,4).join(', ')+') but no rows of data under it, so nothing was stored from it.'); continue; }
         const id = slugify(f.name)+'--'+slugify(sheetName)+'--'+fnv1a(f.name+sheetName+rows.length);
+        // If the settings for this sheet came down from the database earlier, use them. This is
+        // what "press Bring them down first" was always supposed to buy, and it never did.
+        const known = (LIB_CLOUD_SHEETS||[]).find(sh=>
+          (sh.file && String(sh.file).toLowerCase() === String(f.name).toLowerCase()) ||
+          (sh.name && String(sh.name).toLowerCase() === String(sheetName).toLowerCase()));
+        const fromDb = known && known.roles && Object.keys(known.roles).length;
+        if(fromDb) adopted++;
         await libPut({ id, name:sheetName, file:f.name, sheet:sheetName, cols, rows,
-          header_row: hi+1, imported_at:new Date().toISOString(), roles: libGuessRoles(cols) });
+          header_row: hi+1, imported_at:new Date().toISOString(),
+          roles: fromDb ? known.roles : libGuessRoles(cols, rows),
+          roles_source: fromDb ? 'database' : 'guessed' });
         delete libCache[id];
         added++;
         status.textContent = 'Stored '+sheetName+', '+rows.length.toLocaleString()+' rows.';
@@ -6267,6 +6323,8 @@ async function libImportFiles(list){
   if(added){
     status.innerHTML = '<b style="color:var(--green)">Added '+added+' sheet'+(added===1?'':'s')+'.</b> The library now holds '+
       totalRows.toLocaleString()+' rows on this computer.'+
+      (adopted ? (' The column settings came down from the database, so nothing needs mapping by hand.')
+               : ' Check under <b>What each column means</b> that the description and price columns are right.')+
       (notes.length ? '<div class="note warn" style="margin-top:8px">Some sheets in that file were skipped:<ul style="margin:6px 0 0;padding-left:20px">'+notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul></div>' : '');
   } else {
     status.innerHTML = '<div class="note err" style="margin-top:8px"><b>Nothing was stored from that file.</b> '+
@@ -6281,6 +6339,7 @@ function libSetRole(id, role, idx){
     if(!rec) return;
     rec.roles = rec.roles || {};
     if(idx === '') delete rec.roles[role]; else rec.roles[role] = parseInt(idx,10);
+    rec.roles_source = 'you';   // from now on nothing overwrites this sheet's mapping
     libCache[id] = rec;
     libPut(rec).then(libRefreshIndex);
   });
