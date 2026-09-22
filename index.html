@@ -484,7 +484,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B40</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B44</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -693,16 +693,16 @@
     </div>
     <div class="card">
       <h2>What gets kept, and what does not</h2>
-      <p class="hint" style="margin:0 0 10px"><b>The prices are not kept.</b> A price list is reissued about every week, so a stored copy is out of date almost immediately and the only thing it can do is get somebody to bid off last month's numbers. Re-reading the spreadsheet takes about a second and costs nothing, so each computer opens the current one.<br><br><b>What is kept is the part you cannot download again:</b> the shorthand you have taught it, and which column on each sheet is the description, the part number and the price. That is a few kilobytes, it belongs to every job, and it is the only bit that represents work somebody did by hand.</p>
+      <p class="hint" style="margin:0 0 10px"><b>The prices are not kept.</b> A price list is reissued about every week, so a stored copy is out of date almost immediately and the only thing it can do is get somebody to bid off last month's numbers. Re-reading the spreadsheet takes about a second and costs nothing, so each computer opens the current one.<br><br><b>What is kept is the one thing you cannot download again: the shorthand you have taught it.</b> SAN US means schedule 40 PVC sanitary underslab because somebody in this company knew that and typed it in once. That is a few kilobytes, it belongs to every job, and it is the only part that represents work somebody did by hand.<br><br><b>Which column is the description is not kept, on purpose.</b> That answer is written in the spreadsheet itself, and each computer works it out from the copy in front of it. A column number that travels between computers is a column number that can turn up a month out of date &mdash; which is exactly how a whole machine ended up matching against part numbers instead of product wording.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn2 primary" onclick="libPushToCloud(this)" type="button">Save the shorthand and settings</button>
+        <button class="btn2 primary" onclick="libPushToCloud(this)" type="button">Save the shorthand</button>
         <button class="btn2" onclick="libPullFromCloud(this)" type="button">Bring them down on this computer</button>
         <button class="btn2" onclick="libDownloadVocab(this)" type="button">Download the shorthand</button>
         <input type="file" id="vocabFile" accept="application/json" style="display:none" onchange="libRestoreVocab(this)">
         <button class="btn2" onclick="document.getElementById('vocabFile').click()" type="button">Restore from a file</button>
         <span class="hint" id="libCloudMsg" style="margin:0"></span>
       </div>
-      <p class="hint" style="margin:10px 0 0">Nothing here goes near the AI and nothing is charged. On a computer that has never seen the price list: press <b>Bring them down</b> first, then drop the current spreadsheet in above &mdash; the columns will already be mapped.</p>
+      <p class="hint" style="margin:10px 0 0">Nothing here goes near the AI and nothing is charged. On a computer that has never seen the price list, the order does not matter: press <b>Bring them down</b> for the shorthand, and drop the current spreadsheet in above. Either way round works.</p>
     </div>
     <div class="card">
       <h2>Teach it your shorthand</h2>
@@ -1149,8 +1149,7 @@ async function libPushToCloud(btn){
           'the one being used. Press this again in a minute if you want it confirmed.'; }
       return;
     }
-    if(msg) msg.textContent = manifest.sheets.length + ' sheet setting' + (manifest.sheets.length===1?'':'s') +
-      (vocabN ? (' and ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand') : '') +
+    if(msg) msg.textContent = vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand' +
       ' saved' + (ok ? ' and read back to check' : '') + '. ' +
       (cleared ? ('Cleared ' + cleared + ' stored part' + (cleared===1?'':'s') + ' of the old price list out of the database. ') : '') +
       'The prices themselves are not stored — open the current spreadsheet on each computer.';
@@ -1166,7 +1165,7 @@ async function libPullFromCloud(btn, quiet){
   if(msg && !quiet){ msg.style.color = ''; msg.textContent = ''; }
   try{
     const latest = await loadProjectRows(LIBRARY_PROJECT);
-    let vocabN = 0, sheetsKnown = 0, adopted = 0;
+    let vocabN = 0, sheetsKnown = 0;
 
     // The shorthand. This is the whole point of the trip.
     if(latest.lib_vocab){
@@ -1182,29 +1181,14 @@ async function libPullFromCloud(btn, quiet){
       }catch(e){ /* a damaged vocabulary must not stop the rest */ }
     }
 
-    // The column mapping, so nobody has to work out which column is the price a second time.
-    // It is only taken up by a sheet on this computer that has not been mapped yet - it never
-    // overwrites a choice somebody made here.
+    // Which price list was last used, for the record. Read, never applied: a column number that
+    // travels is a column number that can arrive out of date, and one arriving out of date is
+    // what put a part number where the product wording should have been on a whole machine.
     if(latest.lib_manifest){
       try{
         const m = parseStored(latest.lib_manifest) || {};
         LIB_CLOUD_SHEETS = (m.sheets||[]);
         sheetsKnown = LIB_CLOUD_SHEETS.length;
-        for(const ix of libIndex){
-          const rec = await libGet(ix.id);
-          if(!rec) continue;
-          // Only a choice a PERSON made is protected. A guess is not, or the settings that
-          // came down from the database could never replace the guess they exist to correct.
-          if(rec.roles_source === 'you') continue;
-          const match = LIB_CLOUD_SHEETS.find(sh=>
-            (sh.file && rec.file && String(sh.file).toLowerCase() === String(rec.file).toLowerCase()) ||
-            (sh.name && rec.name && String(sh.name).toLowerCase() === String(rec.name).toLowerCase()));
-          if(!match || !match.roles || !Object.keys(match.roles).length) continue;
-          rec.roles = match.roles;
-          await libPut(rec);
-          delete libCache[rec.id];
-          adopted++;
-        }
       }catch(e){ /* a damaged manifest must not stop the shorthand arriving */ }
     }
 
@@ -1215,13 +1199,11 @@ async function libPullFromCloud(btn, quiet){
     if(msg && !quiet){
       if(!vocabN && !sheetsKnown){
         msg.textContent = latest.lib_vocab || latest.lib_manifest
-          ? 'There is something stored under the library, but it could not be read. Press "Save the shorthand and settings" on the computer that has them and it will be written back in a form that reads properly.'
+          ? 'There is something stored under the library, but it could not be read. Press "Save the shorthand" on the computer that has it and it will be written back in a form that reads properly.'
           : 'Nothing is saved in the database yet.';
       }else{
-        msg.textContent = vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand' +
-          (sheetsKnown ? (' and settings for ' + sheetsKnown + ' sheet' + (sheetsKnown===1?'':'s')) : '') +
-          ' brought down' + (adopted ? (', and the column mapping filled in on ' + adopted + ' sheet' + (adopted===1?'':'s') + ' here') : '') + '. ' +
-          (libIndex.length ? '' : 'The prices are not stored in the database — drop the current price list spreadsheet in above.');
+        msg.textContent = vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand brought down. ' +
+          (libIndex.length ? '' : 'The prices are not stored in the database — drop the current price list spreadsheet in above. This computer works out the columns from that spreadsheet itself; nothing about columns comes down from the database any more.');
       }
     }
     return vocabN;
@@ -4666,6 +4648,23 @@ const UOM_SYNONYMS = {
   box:'box', bx:'box', roll:'roll', length:'length', lgth:'length', stick:'length',
   c:'per hundred', m:'per thousand', hr:'hr', hour:'hr', hours:'hr'
 };
+// Feet or each. Everything else - boxes, rolls, lots, hours - is deliberately left as ''
+// so that nothing is refused on the strength of a unit nobody can classify.
+// The library's price for the quantity on the takeoff line, or null when multiplying the two
+// together would be arithmetic on two different things. A unit price is information; a total
+// worked out across mismatched units is a wrong answer dressed as a right one.
+function libExtended(lib, qty, reqUom){
+  if(!lib || !(lib.price > 0)) return null;
+  const a = uomKey(lib.uom), b = uomKey(reqUom);
+  if(a && b && a !== b) return null;
+  return lib.price * (qty || 1);
+}
+function uomFamily(u){
+  const k = uomKey(u);
+  if(k === 'ft' || k === 'length') return 'length';
+  if(k === 'ea') return 'each';
+  return '';
+}
 function uomKey(u){
   const t = String(u||'').toLowerCase().replace(/[^a-z' ]/g,'').trim();
   if(!t) return '';
@@ -4792,7 +4791,11 @@ function buildBuySheet(){
     // costs and it does not belong on a list of things nobody can price. A shaky match still
     // counts - it is shown with its confidence so an unconvincing one is obvious, and one
     // button moves it to the RFQ if you do not believe it.
-    const libPriced = !!(lib && lib.price > 0);
+    const libExt = libExtended(lib, reqQty, row.required_uom);
+    // A price we cannot apply to this line's quantity is not a price for this line. It is shown,
+    // with the reason, but it does not put the line on the buy sheet as though it were costed.
+    const libPriced = !!(lib && lib.price > 0 && libExt !== null);
+    const libUomClash = !!(lib && lib.price > 0 && libExt === null);
     // Any number at all puts the line on the buy sheet: a clean price, a shaky one with a
     // warning, or our own library. Only a line where nobody anywhere put a figure goes out
     // for quoting. A low confidence price is still a price - it is shown, and it is labelled.
@@ -4806,7 +4809,7 @@ function buildBuySheet(){
       tag:row.tag||'', spec_model:row.spec_model||'',
       required_qty:reqQty, required_uom:row.required_uom||'', required_source:row.required_source||'',
       offers, state, blockers, low, high, spread,
-      lib, libPriced, havePrice, flagged,
+      lib, libPriced, libExt, libUomClash, havePrice, flagged,
       trade: rowTrade(row), source: rowSource(row), _row: row,
       spread_pct: (low && spread) ? (spread/low.price*100) : 0 };
   });
@@ -5123,6 +5126,7 @@ function quoteHealth(){
   const questioned = lines.filter(l=>hasNum(l) && !(l.offers||[]).some(o=>o.price !== null));
   const libOnly    = lines.filter(l=>!hasNum(l) && l.libPriced);
   const nothing    = lines.filter(l=>!hasNum(l) && !l.libPriced);
+  const uomClash   = lines.filter(l=>l.libUomClash);
 
   // Ahmed's question: of everything nobody quoted, how much of it is even our trade?
   const cat = {}, trade = {};
@@ -5137,6 +5141,7 @@ function quoteHealth(){
   return { lines: lines.length, names, bySupplier,
     comparable: comparable.length, questioned: questioned.length,
     libOnly: libOnly.length, nothing: nothing.length, libConf: conf,
+    uomClash: uomClash.length, uomClashLines: uomClash,
     nothingByCat: tally(cat), nothingByTrade: tally(trade), nothingLines: nothing,
     quoteLines: bySupplier.reduce((a,b)=>a+b.onQuote, 0),
     quotePlaced: bySupplier.reduce((a,b)=>a+b.placed, 0),
@@ -5269,7 +5274,11 @@ function renderQuoteHealth(){
       h.libOnly+' priced only from your own list. '+
       h.nothing+' not priced by anybody.'+
       '<div class="why" style="margin-top:6px">Lines, not quantities. One line is one line whether it is one floor drain or 400 feet of pipe.</div>'+
-    '</div>';
+    '</div>'+
+    (h.uomClash ? '<div class="note warn"><b>'+h.uomClash+' line'+(h.uomClash===1?' has':'s have')+' a library price in a different unit from the takeoff.</b> '+
+      'A price per EACH cannot be multiplied by a quantity in FT &mdash; that is how a stick of pipe ends up costed like several hundred fittings. '+
+      'Those lines show the unit price and the match, and no total. Usually it means the match itself is wrong: '+
+      esc((h.uomClashLines||[]).slice(0,3).map(l=>(l.takeoff_line||l.item||'')+' \u2192 '+String((l.lib&&l.lib.description)||'').slice(0,40)).join(' \u00b7 '))+'</div>' : '');
 
   const sec = (title, count, body) =>
     '<div class="grp cmp-sec">'+HEADC+'<span class="t">'+esc(title)+'</span>'+
@@ -5510,10 +5519,15 @@ function renderNeedsLook(){
         '<td><span class="mm '+(lineList(l)==='buy'?'exact':'unclear')+'">'+(lineList(l)==='buy'?'BUY':'RFQ')+'</span></td>'+
         names.map(n=>buyCell((l.offers||[]).find(x=>x.supplier===n))).join('')+
         '<td class="supcell libcell">'+(l.libPriced
-          ? '<div class="pricebox">'+money(l.lib.price*(l.required_qty||1))+'</div>'+
+          ? '<div class="pricebox">'+money(l.libExt)+'</div>'+
             '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
             esc(l.lib.confidence)+'</span> '+esc(String(l.lib.description).slice(0,36))+'</div>'
-          : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>'+
+          : l.libUomClash
+            ? '<span class="mm unclear">UNITS DIFFER</span>'+
+              '<div class="why">'+money(l.lib.price)+' / '+esc(l.lib.uom||'?')+' against '+esc(String(l.required_qty||''))+' '+esc(l.required_uom||'')+
+              ' on the takeoff. Multiplying those two together would be a made-up number, so it is not being done. '+
+              esc(String(l.lib.description).slice(0,40))+'</div>'
+            : '<span class="mm miss">NOT IN LIBRARY</span>')+'</td>'+
         '<td class="why">'+esc(
           list === g.dupes ? ('another takeoff line reads the same once the sheet number is taken off the front')
           : list === g.outliers ? priceSanity(l._row).outliers.map(o=>o.supplier+' at '+money(o.unit)+', '+o.why).join('; ')
@@ -5596,7 +5610,7 @@ function renderBuyList(){
             names.map(n=>buyCell(l.offers.find(x=>x.supplier===n))).join('')+
             (!libraryColumnActive() ? libNotHereCell() :
              '<td class="supcell libcell">'+(l.libPriced
-              ? '<div class="pricebox">'+money(l.lib.price * (l.required_qty||1))+'</div>'+
+              ? '<div class="pricebox">'+money(l.libExt)+'</div>'+
                 '<div class="why">'+money(l.lib.price)+(l.lib.uom?(' / '+esc(l.lib.uom)):'')+' &mdash; your cost, not an offer</div>'+
                 '<div class="why"><span class="mm '+(l.lib.confidence==='high'?'exact':l.lib.confidence==='medium'?'equiv':'unclear')+'">'+
                   esc(l.lib.confidence)+' match</span> '+esc(String(l.lib.description).slice(0,44))+'</div>'
@@ -5642,7 +5656,7 @@ function downloadBuySheet(){
         const o = l.offers.find(x=>x.supplier===n);
         row.push(o && o.price !== null ? o.price : (o && o.match !== 'missing' ? 'quoted, cannot use' : ''));
       });
-      row.push(l.libPriced ? (l.lib.price * (l.required_qty||1)) : '');
+      row.push(l.libPriced ? l.libExt : '');
       row.push(l.libPriced ? String(l.lib.description).slice(0,70) : '');
       return row;
     });
@@ -5790,7 +5804,7 @@ function renderBuySheet(){
           (!libraryColumnActive() ? libNotHereCell() : (function(){
             const m = libraryOffer({ takeoff_line:l.takeoff_line, item:l.item, spec_model:l.spec_model||'' });
             if(!m) return '<td class="supcell libcell"><span class="mm miss">NOT IN LIBRARY</span></td>';
-            const mine = m.price ? m.price * (l.required_qty || 1) : 0;
+            const mine = libExtended(m, l.required_qty, l.required_uom) || 0;
             const vs = (mine && l.low) ? Math.round((l.low.price/mine - 1)*100) : null;
             return '<td class="supcell libcell">'+
               (m.price ? '<div class="qtybox" style="font-size:13px">'+money(m.price)+(m.uom?(' / '+esc(m.uom)):'')+'</div>' : '<div class="itemsub">no price mapped</div>')+
@@ -5843,7 +5857,8 @@ function downloadBuyExcel(btn){
     });
     if(bWithLib){
       const m = libraryOffer({ takeoff_line:l.takeoff_line, item:l.item, spec_model:l.spec_model||'' });
-      r.push(m&&m.price?m.price:'', m?m.uom:'', (m&&m.price)?(m.price*(l.required_qty||1)):'', m?m.part:'', m?m.confidence:'not in library');
+      const ext = libExtended(m, l.required_qty, l.required_uom);
+      r.push(m&&m.price?m.price:'', m?m.uom:'', ext === null ? 'units do not match' : ext, m?m.part:'', m?m.confidence:'not in library');
     }
     r.push(l.low?l.low.price:'', l.low?l.low.supplier:'', l.high?l.high.price:'', l.high?l.high.supplier:'', l.spread||'', l.spread?Number(l.spread_pct.toFixed(1)):'');
     aoa.push(r);
@@ -6232,6 +6247,20 @@ const LIB_ROLE_HINTS = {
   uom:['uom','unit','units','per'],
   category:['category','group','class','type','division','section']
 };
+// A description column carries phrases. A part number, a brand and a code carry one token.
+// That is the whole test, and it is the only thing that can tell a stored mapping written by an
+// older build from one that is right. Nothing else about a spreadsheet gives it away.
+function libDescLooksRight(rows, i){
+  if(i === undefined || i === null || i < 0) return false;
+  const sample = (rows || []).slice(0, 60);
+  let n = 0, words = 0;
+  sample.forEach(r=>{
+    const v = String((r && r[i]) == null ? '' : r[i]).trim();
+    if(!v) return;
+    n++; words += v.split(/\s+/).length;
+  });
+  return n > 0 && (words / n) >= 2;
+}
 function libGuessRoles(cols, rows){
   const roles = {};
   const norm = c => String(c||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
@@ -6275,7 +6304,8 @@ async function libImportFiles(list){
   const files = Array.from(list||[]).filter(f=>/\.(xlsx|xlsm|xlsb|xls|csv|tsv)$/i.test(f.name));
   if(!files.length){ status.textContent = 'Only spreadsheets belong in here: .xlsx, .xls or .csv.'; return; }
   if(typeof XLSX === 'undefined'){ status.textContent = 'The spreadsheet library did not load. Check the connection and reload the page.'; return; }
-  let added = 0, adopted = 0;
+  let added = 0;
+  const descCols = [];
   const notes = [];
   for(const f of files){
     try{
@@ -6292,17 +6322,14 @@ async function libImportFiles(list){
           .filter(r=>r.some(c=>c!==''));
         if(!rows.length){ notes.push('"'+sheetName+'" in '+f.name+' has a heading row ('+cols.slice(0,4).join(', ')+') but no rows of data under it, so nothing was stored from it.'); continue; }
         const id = slugify(f.name)+'--'+slugify(sheetName)+'--'+fnv1a(f.name+sheetName+rows.length);
-        // If the settings for this sheet came down from the database earlier, use them. This is
-        // what "press Bring them down first" was always supposed to buy, and it never did.
-        const known = (LIB_CLOUD_SHEETS||[]).find(sh=>
-          (sh.file && String(sh.file).toLowerCase() === String(f.name).toLowerCase()) ||
-          (sh.name && String(sh.name).toLowerCase() === String(sheetName).toLowerCase()));
-        const fromDb = known && known.roles && Object.keys(known.roles).length;
-        if(fromDb) adopted++;
+        // Worked out from this spreadsheet, on this computer, every time. Nothing is fetched and
+        // nothing is remembered from a previous week: the file in front of us is the only thing
+        // that can say which of its columns holds the product wording.
+        const roles = libGuessRoles(cols, rows);
+        if(roles.description !== undefined) descCols.push(cols[roles.description]);
         await libPut({ id, name:sheetName, file:f.name, sheet:sheetName, cols, rows,
           header_row: hi+1, imported_at:new Date().toISOString(),
-          roles: fromDb ? known.roles : libGuessRoles(cols, rows),
-          roles_source: fromDb ? 'database' : 'guessed' });
+          roles: roles, roles_source: 'guessed' });
         delete libCache[id];
         added++;
         status.textContent = 'Stored '+sheetName+', '+rows.length.toLocaleString()+' rows.';
@@ -6323,8 +6350,9 @@ async function libImportFiles(list){
   if(added){
     status.innerHTML = '<b style="color:var(--green)">Added '+added+' sheet'+(added===1?'':'s')+'.</b> The library now holds '+
       totalRows.toLocaleString()+' rows on this computer.'+
-      (adopted ? (' The column settings came down from the database, so nothing needs mapping by hand.')
-               : ' Check under <b>What each column means</b> that the description and price columns are right.')+
+      (descCols.length
+        ? ' <b>The product wording is being read from: '+esc(descCols.join(', '))+'</b> &mdash; if that is not the column with the descriptions in it, say so under <b>What each column means</b> and nothing will overwrite your answer.'
+        : ' <b style="color:var(--rust)">No column in that sheet looks like a description</b>, so there is nothing sensible to match against. Set it under <b>What each column means</b>.')+
       (notes.length ? '<div class="note warn" style="margin-top:8px">Some sheets in that file were skipped:<ul style="margin:6px 0 0;padding-left:20px">'+notes.map(n=>'<li>'+esc(n)+'</li>').join('')+'</ul></div>' : '');
   } else {
     status.innerHTML = '<div class="note err" style="margin-top:8px"><b>Nothing was stored from that file.</b> '+
@@ -6500,8 +6528,28 @@ function libLookup(term, opts){
 let libLoadedAll = false;
 let libIdx = {};   // sheet id -> { token: [rowIndex, ...] }, built once, kept in memory only
 
+let LIB_ROLE_FIXES = [];
 async function libLoadAll(){
-  for(const ix of libIndex){ await libGet(ix.id); }
+  LIB_ROLE_FIXES = [];
+  let changed = false;
+  for(const ix of libIndex){
+    const rec = await libGet(ix.id);
+    if(!rec || !rec.rows || !rec.rows.length) continue;
+    // Checked here, right before anything is matched, whatever route the mapping arrived by.
+    // A comparison must never run against a column of part numbers - that is not a weak result,
+    // it is a wrong one, and it looks like a working answer.
+    if(libDescLooksRight(rec.rows, (rec.roles||{}).description)) continue;
+    const g = libGuessRoles(rec.cols, rec.rows);
+    if(g.description === undefined || g.description === (rec.roles||{}).description) continue;
+    const was = (rec.roles||{}).description;
+    rec.roles = Object.assign({}, rec.roles, { description: g.description });
+    await libPut(rec);
+    libCache[rec.id] = rec;
+    LIB_ROLE_FIXES.push({ sheet: rec.name,
+      was: (was === undefined ? 'nothing' : rec.cols[was]), now: rec.cols[g.description] });
+    changed = true;
+  }
+  if(changed){ libIdx = {}; libRowCache = {}; await libRefreshIndex(); }
   libLoadedAll = true;
   return libIndex.length;
 }
@@ -6747,6 +6795,20 @@ function libStem(line){
     .replace(/\s+/g,' ')
     .trim();
 }
+// The shorthand leads the line and the notes trail it, so the longest TAUGHT leading phrase of
+// the stem is the translation. "san us typ" is not a thing anybody taught; "san us" is, and it
+// is the first two words of it. Only phrases actually in the vocabulary can win, so this can
+// never invent a meaning - it can only stop one being missed.
+function libLookupVocab(stem){
+  if(!stem) return '';
+  if(LIB_VOCAB[stem]) return LIB_VOCAB[stem];
+  const w = String(stem).split(' ');
+  for(let n = w.length - 1; n >= 1; n--){
+    const k = w.slice(0, n).join(' ');
+    if(LIB_VOCAB[k]) return LIB_VOCAB[k];
+  }
+  return '';
+}
 // Every distinct shorthand on the takeoff that the library cannot currently place.
 function libUnmatchedStems(){
   const items = (takeoffData && takeoffData.items) || [];
@@ -6754,7 +6816,8 @@ function libUnmatchedStems(){
   items.forEach(it=>{
     const stem = libStem(it.description);
     if(!stem) return;
-    const m = libBestMatch([it.description, it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description);
+    if(libLookupVocab(stem)) return;   // already covered by something taught for the leading words
+    const m = libBestMatch([it.description, it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description, it.uom);
     const ok = m && m.confidence !== 'low';
     if(!seen[stem]) seen[stem] = { stem, lines:[], notes:[], matched:0, unmatched:0, category: catOf(it) };
     if(seen[stem].lines.length < 4) seen[stem].lines.push(it.description);
@@ -6785,8 +6848,12 @@ function libTokens(t){
   // A bare digit is kept on purpose. In plumbing the single most identifying token on a line
   // is often the size, and 2 in `2" copper` was being thrown away for being one character.
   const keep = w => (w.length>1 || /\d/.test(w)) && !LIB_STOP.has(w);
+  // TYPE L, TYPE M, TYPE K. CLASS B. SCHEDULE 40. The letter after one of these words is the
+  // product, not noise, and dropping it made type M copper indistinguishable from type L.
+  const GRADED = new Set(['type','class','grade','series','sch','schedule']);
   const out = [];
-  raw.forEach(w=>{
+  raw.forEach((w, i)=>{
+    if(w.length === 1 && GRADED.has(raw[i-1])){ out.push(raw[i-1] + w); return; }
     const exp = libExpand(w);
     if(exp !== w){ exp.split(' ').forEach(x=>{ if(keep(x)) out.push(x); }); return; }
     if(keep(w)) out.push(w);
@@ -6826,23 +6893,54 @@ function libEnsureIndex(rec){
 }
 // What the takeoff line is asking for, plus anything the tool has been taught about that
 // shorthand. Only the query side is expanded: the price list says what it says.
+// P100_ , M22- - the drawing or section the line was taken off. libStem has always removed it
+// before looking the shorthand up; the scorer never did, and "p100" is four characters with
+// three digits in it, which it reads as a part number and weights four times a word. It matches
+// nothing in any price list, so it only ever drags the score down, and it drags it down on the
+// lines that carry a prefix and not on the ones that do not. Same item, same matched row, same
+// price, one called "likely" and one called "unsure".
+// The nominal size as written: 4", 1-1/2", 3 in. Not any number on the line - "SCH 40" and
+// "10 FT" are numbers too, and treating those as the size is how a 2" line was allowed to match
+// a 4" fitting on the strength of them both saying 40.
+function libNominalSize(t){
+  // A catalogue writes 1-1/2", 1 1/2" and 1 1/2 IN for the same pipe, so they are brought to one
+  // spelling before anything is compared. Feet are left alone on purpose: the 10 in 10' is the
+  // length of the stick, not the size of it.
+  const s = String(t == null ? '' : t)
+    .replace(/(\d)\s*[-\s]\s*(\d+\s*\/\s*\d+)/g, '$1-$2')
+    .replace(/\s*\/\s*/g, '/');
+  const m = /((?:\d+-)?\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:"|''|\bin\b|\binch(?:es)?\b)/i.exec(s);
+  return m ? m[1] : '';
+}
+function libStripSheet(t){
+  return String(t == null ? '' : t).replace(/^\s*[A-Za-z]{1,3}\d{2,4}[_\s-]+/, '');
+}
 function libQueryText(text, keyText){
   // The shorthand is keyed on the takeoff line ALONE. Look it up on the whole search string -
   // takeoff line plus spec model plus notes plus the bid requirement wording - and the stem is
   // a sentence, matches no key, and the translation is silently never applied. That is what
   // put NOT IN LIBRARY on every pipe line that had a bid requirement tied to it.
-  const learned = LIB_VOCAB[libStem(keyText == null ? text : keyText)];
-  return learned ? (String(text||'') + ' ' + learned) : text;
+  const learned = libLookupVocab(libStem(keyText == null ? text : keyText));
+  const base = libStripSheet(text);
+  return learned ? (base + ' ' + learned) : base;
 }
-function libBestMatch(text, keyText){
-  const qTokens = libTokens(libQueryText(text, keyText));
+function libBestMatch(text, keyText, reqUom){
+  const qTokens = Array.from(new Set(libTokens(libQueryText(text, keyText))));
   if(!qTokens.length) return null;
+  // Taken from the takeoff line itself, not from the expansion: the shorthand is taught without
+  // a size on purpose, so the size can only come from the line in front of us.
+  const qSize = libNominalSize(libStripSheet(keyText == null ? text : keyText));
+  // Only ever 'length', 'each' or nothing. Nothing means no opinion, and no opinion refuses
+  // no rows at all.
+  const qFam = uomFamily(reqUom);
   const qWeightTotal = qTokens.reduce((a,t)=>a+libWeight(t), 0);
   let best = null, runnersUp = 0;
   libIndex.forEach(ix=>{
     const rec = libCache[ix.id];
     if(!rec || !rec.rows.length) return;
     const idx = libEnsureIndex(rec);
+    const roleDesc = (rec.roles||{}).description;
+    const roleUom = (rec.roles||{}).uom;
     // Candidates come from the most selective tokens only. Scoring every row against every
     // takeoff line would be tens of millions of comparisons; this is a few hundred.
     const cand = new Map();
@@ -6860,7 +6958,17 @@ function libBestMatch(text, keyText){
     }
     if(!cand.size) return;
     cand.forEach((_, i)=>{
-      const rowToks = new Set(libTokens(libRowText(rec, rec.rows[i])));
+      // A line measured in feet against a row sold each, or the other way round: a different
+      // kind of thing. This is what stops 386.52 FT of sanitary pipe landing on a socket.
+      if(qFam && roleUom !== undefined){
+        const rFam = uomFamily(rec.rows[i][roleUom]);
+        if(rFam && rFam !== qFam) return;
+      }
+      const rowRaw = libRowText(rec, rec.rows[i]);
+      const rowSize = libNominalSize(rowRaw);
+      // Both sides say a size outright and the sizes are different: it is a different product.
+      if(qSize && rowSize && qSize !== rowSize) return;
+      const rowToks = new Set(libTokens(rowRaw));
       let hit = 0, modelHit = 0, wordHit = 0, sizeHit = 0;
       qTokens.forEach(t=>{
         if(!rowToks.has(t)) return;
@@ -6872,8 +6980,11 @@ function libBestMatch(text, keyText){
       // How much of the LIBRARY row's own wording was accounted for. A terse catalogue entry
       // whose every word appears in a wordy takeoff line is a real match even though it is only
       // a fraction of that line.
+      const descToks = roleDesc !== undefined
+        ? new Set(libTokens(String(rec.rows[i][roleDesc] == null ? '' : rec.rows[i][roleDesc])))
+        : rowToks;
       let rowWords = 0, rowWordsHit = 0;
-      rowToks.forEach(t=>{ if(libTokKind(t)==='word'){ rowWords++; if(qTokens.indexOf(t)>=0) rowWordsHit++; } });
+      descToks.forEach(t=>{ if(libTokKind(t)==='word'){ rowWords++; if(qTokens.indexOf(t)>=0) rowWordsHit++; } });
       const rowWordCov = rowWords ? rowWordsHit/rowWords : 0;
       // Matching on a shared pipe size and nothing else is not a match. It needs a model
       // number, or two words in common, or one word that accounts for the whole library entry.
@@ -6888,11 +6999,13 @@ function libBestMatch(text, keyText){
       rowToks.forEach(t=>{ rowWeightTotal += libWeight(t); });
       const score = Math.max(hit / qWeightTotal, rowWeightTotal ? (hit / rowWeightTotal) : 0);
       if(score < 0.45) return;
-      if(!best || score > best.score){
+      const better = !best || score > best.score + 1e-9 ||
+        (Math.abs(score - best.score) <= 1e-9 && rowWordCov > best.rowWordCov + 1e-9);
+      if(better){
         if(best && Math.abs(best.score - score) > 0.05) runnersUp = 0;
         best = { sheetId: ix.id, sheet: ix.name, rowIndex: i, row: rec.rows[i], cols: rec.cols,
                  roles: rec.roles||{}, score, modelHit, wordHit, sizeHit, rowWordCov };
-      } else if(best && Math.abs(best.score - score) <= 0.05) runnersUp++;
+      } else if(best && Math.abs(best.score - score) <= 0.05 && best.rowIndex !== i) runnersUp++;
     });
   });
   if(!best) return null;
@@ -6909,6 +7022,7 @@ function libBestMatch(text, keyText){
   if(best.modelHit) bits.push(best.modelHit+' part or model number'+(best.modelHit===1?'':'s'));
   if(best.wordHit) bits.push(best.wordHit+' word'+(best.wordHit===1?'':'s'));
   if(best.sizeHit) bits.push('the size');
+  if(qSize) bits.push('and it is the '+qSize+'" one either side');
   best.why = 'matched on '+(bits.join(' and ') || 'wording')+', covering '+Math.round(best.score*100)+'% of it'+
     (!best.modelHit ? ', with no part or model number in common' : '');
   return best;
@@ -6937,7 +7051,7 @@ async function libTestAgainstTakeoff(btn){
       // the dry run must ask exactly what a real run asks, or it reports a comfort that is not there
       const text = [it.description, [it.manufacturer, it.model].filter(Boolean).join(' '),
                     it.notes, bidTextForLine(it.description)].filter(Boolean).join(' ');
-      return { line: it.description, m: libBestMatch(text, it.description) };
+      return { line: it.description, m: libBestMatch(text, it.description, it.uom) };
     });
     const hit    = res.filter(r=>r.m);
     const priced = hit.filter(r=>r.m.price > 0);
@@ -6994,7 +7108,7 @@ function libraryOffer(row){
   if(key in libRowCache) return libRowCache[key];
   const m = libBestMatch([row.takeoff_line || row.item, row.spec_model, row.notes,
                           bidTextForLine(row.takeoff_line || row.item)].filter(Boolean).join(' '),
-                         row.takeoff_line || row.item);
+                         row.takeoff_line || row.item, row.required_uom);
   libRowCache[key] = m;
   return m;
 }
@@ -7076,7 +7190,7 @@ function libraryLookupForAsk(){
   const matches = [];
   items.forEach(it=>{
     const m = libBestMatch([it.description, [it.manufacturer,it.model].filter(Boolean).join(' '),
-                            it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description);
+                            it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description, it.uom);
     if(m) matches.push({ takeoff_line: it.description, library_description: m.description,
       part: m.part||'', price: m.price||0, uom: m.uom||'', confidence: m.confidence, matched_because: m.why });
   });
