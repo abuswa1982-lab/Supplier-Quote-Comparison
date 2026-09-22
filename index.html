@@ -484,7 +484,7 @@
     <button id="ptab-compare" onclick="setPageTab('compare')" type="button">5 &middot; Comparison</button>
     <button id="ptab-buy" onclick="setPageTab('buy')" type="button">6 &middot; Buy Sheet &amp; RFQ<span class="tabcount" id="tc-buy">0</span></button>
     <button id="ptab-ask" onclick="setPageTab('ask')" type="button">Ask</button>
-    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B37</b></span>
+    <span class="buildstamp" title="The build of this file. Quote it when something looks wrong.">build <b>B38</b></span>
   </div>
 
   <!-- ============================ TAB 1: TAKEOFF ============================ -->
@@ -697,6 +697,9 @@
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button class="btn2 primary" onclick="libPushToCloud(this)" type="button">Save the shorthand and settings</button>
         <button class="btn2" onclick="libPullFromCloud(this)" type="button">Bring them down on this computer</button>
+        <button class="btn2" onclick="libDownloadVocab(this)" type="button">Download the shorthand</button>
+        <input type="file" id="vocabFile" accept="application/json" style="display:none" onchange="libRestoreVocab(this)">
+        <button class="btn2" onclick="document.getElementById('vocabFile').click()" type="button">Restore from a file</button>
         <span class="hint" id="libCloudMsg" style="margin:0"></span>
       </div>
       <p class="hint" style="margin:10px 0 0">Nothing here goes near the AI and nothing is charged. On a computer that has never seen the price list: press <b>Bring them down</b> first, then drop the current spreadsheet in above &mdash; the columns will already be mapped.</p>
@@ -1000,6 +1003,47 @@ async function libFetchVocab(){
     return Object.keys(LIB_VOCAB).length;
   }catch(e){ return 0; }
 }
+// The shorthand, out to a file you can keep. It is the only thing in this tool that cannot be
+// got back from anywhere else, so there has to be a way to hold a copy of it that does not
+// depend on this browser, this database, or me.
+function libDownloadVocab(btn){
+  const msg = document.getElementById('libCloudMsg');
+  const n = Object.keys(LIB_VOCAB).length;
+  if(!n){ if(msg){ msg.style.color = '#B4451F'; msg.textContent = 'There is no shorthand on this computer to download.'; } return; }
+  const payload = { _what:'modonix shorthand', _at:new Date().toISOString(), count:n, vocab:LIB_VOCAB, meta:libVocabMeta };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'}));
+  a.download = 'modonix-shorthand-' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+  if(msg){ msg.style.color = ''; msg.textContent = n + ' piece' + (n===1?'':'s') + ' of shorthand saved to your Downloads.'; }
+  flash(btn, 'Saved ✓');
+}
+// Back in from that file. It ADDS - it never clears what is already here - so restoring an old
+// copy can only ever give you back translations, never take one away.
+async function libRestoreVocab(input){
+  const msg = document.getElementById('libCloudMsg');
+  const f = input && input.files && input.files[0];
+  input.value = '';
+  if(!f) return;
+  try{
+    const p = JSON.parse(await f.text());
+    const incoming = p.vocab || p;
+    if(!incoming || typeof incoming !== 'object') throw new Error('that file does not hold any shorthand');
+    const before = Object.keys(LIB_VOCAB).length;
+    libApplyVocab(Object.assign({}, incoming, LIB_VOCAB));   // anything here already wins
+    libSaveVocabLocal();
+    const added = Object.keys(LIB_VOCAB).length - before;
+    libRowCache = {};
+    renderLibrary(); renderCompare(); renderBuySheet(); updateCounts();
+    if(msg){ msg.style.color = '';
+      msg.textContent = added
+        ? (added + ' piece' + (added===1?'':'s') + ' of shorthand restored. Nothing already here was changed. Press Save to put it back in the database.')
+        : 'Everything in that file was already on this computer, so nothing changed.'; }
+  }catch(e){
+    if(msg){ msg.style.color = '#B4451F'; msg.textContent = 'Could not read that file: ' + e.message; }
+  }
+}
 function libChunkKey(id, i){ return 'lib_rows:' + id + ':p' + String(i).padStart(6,'0'); }
 // Push every sheet up. Rows go in chunks; the manifest carries the column mapping, which is the
 // part that actually decides whether the library works, and which was previously one browser
@@ -1042,24 +1086,51 @@ async function libPushToCloud(btn){
 
     // The shorthand. This is the part worth keeping: a price list can be downloaded again
     // from the supply house and this cannot be got back from anywhere.
-    const vocabN = Object.keys(LIB_VOCAB).length;
+    // MERGE before sending. This used to send whatever this browser happened to be holding,
+    // which replaced the stored set outright. A computer with five translations on it could
+    // therefore delete seventy-four belonging to somebody else. The union goes up, never less.
+    let merged = Object.assign({}, LIB_VOCAB);
+    try{
+      const prev = await loadProjectRows(LIBRARY_PROJECT);
+      if(prev.lib_vocab){
+        const pv = JSON.parse(prev.lib_vocab.data);
+        // Theirs first, ours on top: an edit made here wins over the stored wording, but
+        // nothing stored is ever dropped.
+        merged = Object.assign({}, pv.vocab||{}, LIB_VOCAB);
+      }
+    }catch(e){ /* unreachable, or nothing stored yet - send what we have */ }
+    const vocabN = Object.keys(merged).length;
+    const mine = Object.keys(LIB_VOCAB).length;
+    if(vocabN > mine){
+      // Something came back that this computer did not have. Keep it here too.
+      libApplyVocab(merged);
+      libSaveVocabLocal();
+    }
     if(vocabN){
       if(msg) msg.textContent = 'Sending the shorthand…';
-      await saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: LIB_VOCAB, meta: libVocabMeta });
+      await saveToProject(LIBRARY_PROJECT, 'lib_vocab', { vocab: merged, meta: libVocabMeta });
     }
 
-    // Read it straight back. "It said it saved" is not the same as "it is in there".
+    // Read it straight back. "It said it saved" is not the same as "it is in there" - but the
+    // database does not always answer with its own write on the first ask, and reporting
+    // "0 of 74 came back" on a save that was perfectly fine is its own kind of damage.
     let ok = false, vocabBack = 0;
-    try{
-      const back = await loadProjectRows(LIBRARY_PROJECT);
-      ok = !!back.lib_manifest;
-      if(back.lib_vocab){ try{ vocabBack = Object.keys(JSON.parse(back.lib_vocab.data).vocab||{}).length; }catch(e){} }
-    }catch(e){ /* the send itself succeeded; only the read-back failed */ }
+    for(let attempt = 0; attempt < 3; attempt++){
+      if(attempt) await sleep(1500);
+      try{
+        const back = await loadProjectRows(LIBRARY_PROJECT);
+        ok = !!back.lib_manifest;
+        if(back.lib_vocab){ try{ vocabBack = Object.keys(JSON.parse(back.lib_vocab.data).vocab||{}).length; }catch(e){} }
+      }catch(e){ /* the send itself succeeded; only the read-back failed */ }
+      if(vocabBack >= vocabN) break;
+      if(msg) msg.textContent = 'Checking it really went in…';
+    }
 
-    if(vocabN && ok && vocabBack < vocabN){
-      if(msg){ msg.style.color = '#B4451F';
-        msg.textContent = 'The settings saved but only ' + vocabBack + ' of ' + vocabN +
-          ' pieces of shorthand came back. Try again before relying on this.'; }
+    if(vocabN && vocabBack < vocabN){
+      if(msg){ msg.style.color = '#8A5A00';
+        msg.textContent = 'Sent ' + vocabN + ' piece' + (vocabN===1?'':'s') + ' of shorthand, but the database has only ' +
+          'confirmed ' + vocabBack + ' so far. Nothing has been lost: your copy on this computer is untouched, and it is ' +
+          'the one being used. Press this again in a minute if you want it confirmed.'; }
       return;
     }
     if(msg) msg.textContent = manifest.sheets.length + ' sheet setting' + (manifest.sheets.length===1?'':'s') +
@@ -1085,8 +1156,12 @@ async function libPullFromCloud(btn, quiet){
     if(latest.lib_vocab){
       try{
         const v = JSON.parse(latest.lib_vocab.data);
-        libApplyVocab(v.vocab||{});
-        libVocabMeta = v.meta || null;
+        // MERGE. This used to replace, so pressing this button on a computer whose database
+        // copy was thin wiped everything taught on this machine. Bringing something down must
+        // never be able to take something away.
+        libApplyVocab(Object.assign({}, LIB_VOCAB, v.vocab||{}));
+        libVocabMeta = v.meta || libVocabMeta;
+        libSaveVocabLocal();
         vocabN = Object.keys(LIB_VOCAB).length;
       }catch(e){ /* a damaged vocabulary must not stop the rest */ }
     }
@@ -6620,7 +6695,7 @@ function libUnmatchedStems(){
   items.forEach(it=>{
     const stem = libStem(it.description);
     if(!stem) return;
-    const m = libBestMatch([it.description, it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '));
+    const m = libBestMatch([it.description, it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description);
     const ok = m && m.confidence !== 'low';
     if(!seen[stem]) seen[stem] = { stem, lines:[], notes:[], matched:0, unmatched:0, category: catOf(it) };
     if(seen[stem].lines.length < 4) seen[stem].lines.push(it.description);
@@ -6692,12 +6767,16 @@ function libEnsureIndex(rec){
 }
 // What the takeoff line is asking for, plus anything the tool has been taught about that
 // shorthand. Only the query side is expanded: the price list says what it says.
-function libQueryText(text){
-  const learned = LIB_VOCAB[libStem(text)];
+function libQueryText(text, keyText){
+  // The shorthand is keyed on the takeoff line ALONE. Look it up on the whole search string -
+  // takeoff line plus spec model plus notes plus the bid requirement wording - and the stem is
+  // a sentence, matches no key, and the translation is silently never applied. That is what
+  // put NOT IN LIBRARY on every pipe line that had a bid requirement tied to it.
+  const learned = LIB_VOCAB[libStem(keyText == null ? text : keyText)];
   return learned ? (String(text||'') + ' ' + learned) : text;
 }
-function libBestMatch(text){
-  const qTokens = libTokens(libQueryText(text));
+function libBestMatch(text, keyText){
+  const qTokens = libTokens(libQueryText(text, keyText));
   if(!qTokens.length) return null;
   const qWeightTotal = qTokens.reduce((a,t)=>a+libWeight(t), 0);
   let best = null, runnersUp = 0;
@@ -6799,7 +6878,7 @@ async function libTestAgainstTakeoff(btn){
       // the dry run must ask exactly what a real run asks, or it reports a comfort that is not there
       const text = [it.description, [it.manufacturer, it.model].filter(Boolean).join(' '),
                     it.notes, bidTextForLine(it.description)].filter(Boolean).join(' ');
-      return { line: it.description, m: libBestMatch(text) };
+      return { line: it.description, m: libBestMatch(text, it.description) };
     });
     const hit    = res.filter(r=>r.m);
     const priced = hit.filter(r=>r.m.price > 0);
@@ -6855,7 +6934,8 @@ function libraryOffer(row){
   const key = reqKey((row.takeoff_line||row.item||'')+'|'+(row.spec_model||''));
   if(key in libRowCache) return libRowCache[key];
   const m = libBestMatch([row.takeoff_line || row.item, row.spec_model, row.notes,
-                          bidTextForLine(row.takeoff_line || row.item)].filter(Boolean).join(' '));
+                          bidTextForLine(row.takeoff_line || row.item)].filter(Boolean).join(' '),
+                         row.takeoff_line || row.item);
   libRowCache[key] = m;
   return m;
 }
@@ -6937,7 +7017,7 @@ function libraryLookupForAsk(){
   const matches = [];
   items.forEach(it=>{
     const m = libBestMatch([it.description, [it.manufacturer,it.model].filter(Boolean).join(' '),
-                            it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '));
+                            it.notes, bidTextForLine(it.description)].filter(Boolean).join(' '), it.description);
     if(m) matches.push({ takeoff_line: it.description, library_description: m.description,
       part: m.part||'', price: m.price||0, uom: m.uom||'', confidence: m.confidence, matched_because: m.why });
   });
